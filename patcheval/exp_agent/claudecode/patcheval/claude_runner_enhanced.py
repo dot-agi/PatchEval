@@ -346,7 +346,7 @@ class ClaudeRunnerEnhanced:
             # `su -` is a login shell and normally sources ~/.bashrc via ~/.profile,
             # but source it explicitly so the OAuth token / model / effort exports
             # apply even on minimal base images.
-            switch_user_cmd = f"su - claude_user -c 'cd {self.work_dir} && . ~/.bashrc 2>/dev/null; {env_prefix}{cmd}'"
+            switch_user_cmd = f"su - claude_user -c 'cd {self.work_dir} && (. ~/.bashrc 2>/dev/null || true) && {env_prefix}{cmd}'"
             
             
             try:

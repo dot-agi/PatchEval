@@ -110,10 +110,21 @@ def test_setup_installs_harness_when_enabled(monkeypatch):
 
 
 def test_build_command_uses_cfg_model(monkeypatch):
-    # Ensure no host env leaks in to make this a real cfg-driven assertion.
-    monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
-    cfg = _make_cfg(use_harness_skills=False)
+    # Use a NON-default cfg model and a CONFLICTING host env model so the test
+    # distinguishes "cfg wins" from the env-fallback default. monkeypatch.setenv
+    # is auto-reverted after the test.
+    cfg_model = "claude-sonnet-4-6"
+    env_model = "claude-opus-4-8"
+    monkeypatch.setenv("ANTHROPIC_MODEL", env_model)
+    cfg = AgentRunConfig(
+        agent="claude-code",
+        model=cfg_model,
+        reasoning="high",
+        auth=AuthConfig(method="api_key", credentials={"api_key": "sk-ant-xyz"}),
+        run=RunConfig(use_harness_skills=False),
+    )
     runner = ClaudeRunnerEnhanced("cid", "/workspace/repo", cfg=cfg)
 
     cmd = runner._build_claude_command("default")
-    assert "--model claude-opus-4-8" in cmd
+    assert f"--model {cfg_model}" in cmd      # cfg model wins
+    assert env_model not in cmd               # conflicting host env is ignored
