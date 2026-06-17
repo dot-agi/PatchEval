@@ -50,19 +50,30 @@ echo "Dataset:  $DATASET   Output: $OUTDIR   Workers: $MAX_WORKERS   Python: $PY
 echo ""
 
 mkdir -p "$OUTDIR"
-"$PY" -m patcheval.cli batch \
-    --dataset "$DATASET" \
-    --outputs-root "$OUTDIR" \
-    --agent codex \
-    --auth "$AUTH_MODE" \
-    --strategy default \
-    --max-workers "$MAX_WORKERS" \
-    --tool-limits "total:200" \
-    --max-cost-usd 1000 \
-    --allow-git-diff-fallback \
-    --resume \
-    --save-process-logs
-rc=$?
+
+# Prefer a config.yaml run when present: model / reasoning / auth / dataset /
+# outputs / workers all come from the config (CLI flags below are the fallback).
+CONFIG="${CONFIG:-config.yaml}"
+if [ -f "$CONFIG" ]; then
+    echo "Config:   $CONFIG (config-driven; env/--auth flags ignored)"
+    echo ""
+    "$PY" -m patcheval.cli batch --config "$CONFIG" --resume
+    rc=$?
+else
+    "$PY" -m patcheval.cli batch \
+        --dataset "$DATASET" \
+        --outputs-root "$OUTDIR" \
+        --agent codex \
+        --auth "$AUTH_MODE" \
+        --strategy default \
+        --max-workers "$MAX_WORKERS" \
+        --tool-limits "total:200" \
+        --max-cost-usd 1000 \
+        --allow-git-diff-fallback \
+        --resume \
+        --save-process-logs
+    rc=$?
+fi
 
 # Best-effort cleanup of this run's work containers.
 docker ps -aq --filter "name=bench." --filter "name=${MY_MODEL}" 2>/dev/null \

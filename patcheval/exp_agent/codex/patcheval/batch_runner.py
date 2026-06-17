@@ -103,7 +103,8 @@ def run_batch_cves(dataset_path: Path,
                   save_process_logs: bool = False,
                   allow_git_diff_fallback: bool = False,
                   settings_file: Optional[str] = None,
-                  port: str="8082") -> Dict[str, Any]:
+                  port: str="8082",
+                  cfg=None) -> Dict[str, Any]:
     
     start_time = time.time()
     logger = logging.getLogger(__name__)
@@ -153,7 +154,8 @@ def run_batch_cves(dataset_path: Path,
                 save_process_logs=save_process_logs,
                 allow_git_diff_fallback=allow_git_diff_fallback,
                 settings_file=settings_file,
-                port=port
+                port=port,
+                cfg=cfg
             ): record for record in records
         }
         

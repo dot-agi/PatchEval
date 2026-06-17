@@ -70,7 +70,8 @@ class CodexRunner:
                  max_cost_usd: float = 10.0,
                  enable_detailed_logging: bool = True,
                  allow_git_diff_fallback: bool = False,
-                 settings_file: Optional[str] = None):
+                 settings_file: Optional[str] = None,
+                 cfg=None):
         self.container_id = container_id
         self.work_dir = work_dir
         self.auth_mode = auth_mode
@@ -82,11 +83,19 @@ class CodexRunner:
         self.cost_controller = CostController(max_cost_usd)
         self.logger = logging.getLogger(__name__)
 
-        # Codex model + reasoning effort come from the environment (set by
+        # Config-driven run: model / reasoning effort / auth mode come from the
+        # AgentRunConfig (patcheval.config). When no cfg is supplied we keep the
+        # legacy env-based behavior (CODEX_MODEL / CODEX_REASONING_EFFORT set by
         # run_infer.sh), mirroring how the Claude runner reads ANTHROPIC_MODEL /
         # CLAUDE_CODE_EFFORT_LEVEL. Unset => let Codex use its configured default.
-        self.model = os.getenv("CODEX_MODEL") or None
-        self.effort = os.getenv("CODEX_REASONING_EFFORT") or None
+        self.cfg = cfg
+        if cfg is not None:
+            self.model = cfg.model
+            self.effort = cfg.reasoning
+            self.auth_mode = {"api_key": "api-key", "subscription": "subscription"}[cfg.auth.method]
+        else:
+            self.model = os.getenv("CODEX_MODEL") or None
+            self.effort = os.getenv("CODEX_REASONING_EFFORT") or None
         # CODEX_HOME inside the container (for the non-root agent user).
         self.codex_home = os.getenv("CONTAINER_CODEX_HOME", "/home/claude_user/.codex")
 
@@ -152,8 +161,10 @@ class CodexRunner:
             self._log_process_step("prompt_generation", "wrote codex_prompt.md + AGENTS.md")
 
             # Install the defending-code harness so Codex can follow the same
-            # vuln-scan -> triage -> patch process as the Claude Code agent.
-            self._install_harness()
+            # vuln-scan -> triage -> patch process as the Claude Code agent. The
+            # config-driven run can opt out via run.use_harness_skills=False.
+            if self.cfg is None or self.cfg.run.use_harness_skills:
+                self._install_harness()
 
             # Commit the tooling (AGENTS.md, .claude/, harness) so the agent's
             # final `git diff` contains only the real source fix.
@@ -180,6 +191,12 @@ class CodexRunner:
         api-key:       export CODEX_API_KEY (consumed by `codex exec`).
         subscription:  rely on the seeded $CODEX_HOME/auth.json (no token env).
         """
+        # Config-driven: derive the export block from the AgentRunConfig. This does
+        # NOT mutate os.environ -- the block is written into the container .bashrc.
+        if getattr(self, "cfg", None) is not None:
+            from .config import build_codex_auth
+            exports, _ = build_codex_auth(self.cfg.auth.method, self.cfg.auth.credentials)
+            return exports
         mode = self._resolved_auth_mode()
         lines = [f"export CODEX_HOME='{self.codex_home}'"]
         if mode == "api-key":
@@ -207,7 +224,20 @@ class CodexRunner:
         return "subscription"
 
     def _seed_subscription_auth(self) -> None:
-        """Copy the host's Codex auth.json into the container's CODEX_HOME."""
+        """Seed the container's CODEX_HOME/auth.json with the subscription tokens.
+
+        Config-driven: write the auth_json blob from the AgentRunConfig straight
+        into the container. Otherwise copy the host's ~/.codex/auth.json.
+        """
+        if getattr(self, "cfg", None) is not None and self.cfg.auth.credentials.get("auth_json"):
+            import json
+            self._write_file_to_container(
+                f"{self.codex_home}/auth.json",
+                json.dumps(self.cfg.auth.credentials["auth_json"], indent=2),
+            )
+            self._exec_in_container("chown", f"-R claude_user:claude_user {self.codex_home}")
+            self._log_process_step("codex_auth_seeded_cfg", f"{self.codex_home}/auth.json")
+            return
         host_auth = os.path.expanduser(
             os.getenv("HOST_CODEX_AUTH", "~/.codex/auth.json")
         )

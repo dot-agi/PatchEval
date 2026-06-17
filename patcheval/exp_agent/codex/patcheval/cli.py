@@ -22,6 +22,7 @@ from .batch_runner import run_batch_cves
 from .single_runner import run_single_cve
 from .docker_utils import cleanup_containers_by_prefix
 from .dataset import load_dataset
+from .config import load_config
 
 
 def get_available_strategies() -> list[str]:
@@ -38,17 +39,21 @@ def parse_args() -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     def add_common(p):
-        p.add_argument("--dataset", type=Path, default="./dataset.jsonl")
-        p.add_argument("--outputs-root", type=Path, default="./outputs")
-        p.add_argument("--timeout", type=str, default="45m")
-        p.add_argument("--agent-timeout", type=str, default="30m")
-        p.add_argument("--strategy", choices=get_available_strategies(), default="default")
+        # --config drives a config.yaml run; the override-able flags below default
+        # to None so resolve_run_config only overrides cfg.run when explicitly set.
+        p.add_argument("--config", type=str, default=None,
+                       help="Path to run config.yaml (auto-detected as ./config.yaml if present)")
+        p.add_argument("--dataset", type=Path, default=None)
+        p.add_argument("--outputs-root", type=Path, default=None)
+        p.add_argument("--timeout", type=str, default=None)
+        p.add_argument("--agent-timeout", type=str, default=None)
+        p.add_argument("--strategy", choices=get_available_strategies(), default=None)
         # Agent backend + auth. Reserved for future backends; codex is the default.
         p.add_argument("--agent", choices=["codex"], default="codex")
         p.add_argument("--auth", choices=["api-key", "subscription", "auto"], default="auto")
         p.add_argument("--api-provider", choices=["openai"], default="openai")
-        p.add_argument("--tool-limits", type=str, help="(tool1:limit1,... or total:500)")
-        p.add_argument("--max-cost-usd", type=float, default=10.0)
+        p.add_argument("--tool-limits", type=str, default=None, help="(tool1:limit1,... or total:500)")
+        p.add_argument("--max-cost-usd", type=float, default=None)
         p.add_argument("--enable-detailed-logging", action="store_true", default=True)
         p.add_argument("--save-process-logs", action="store_true")
         p.add_argument("--allow-git-diff-fallback", action="store_true")
@@ -57,7 +62,7 @@ def parse_args() -> argparse.Namespace:
 
     batch_parser = subparsers.add_parser("batch")
     add_common(batch_parser)
-    batch_parser.add_argument("--max-workers", type=int, default=1)
+    batch_parser.add_argument("--max-workers", type=int, default=None)
     batch_parser.add_argument("--limit", type=int)
     batch_parser.add_argument("--resume", action="store_true")
     batch_parser.add_argument("--keep-containers", action="store_true")
@@ -123,22 +128,66 @@ def resolve_auth_mode(auth_mode: str) -> str:
     )
 
 
+def resolve_run_config(args):
+    """Load a run config when --config is given (or ./config.yaml is present) and
+    apply CLI overrides onto cfg.run. Returns the AgentRunConfig, or None when
+    there is no config so callers keep the legacy env/--auth credential behavior."""
+    cfg_path = getattr(args, "config", None) or ("config.yaml" if os.path.exists("config.yaml") else None)
+    if not cfg_path:
+        return None
+    cfg = load_config(cfg_path)
+    for attr, dest in [("dataset", "dataset"), ("outputs_root", "outputs_root"),
+                       ("max_workers", "max_workers"), ("strategy", "strategy"),
+                       ("timeout", "timeout"), ("agent_timeout", "agent_timeout"),
+                       ("tool_limits", "tool_limits"), ("max_cost_usd", "max_cost_usd")]:
+        v = getattr(args, attr, None)
+        if v is not None:
+            setattr(cfg.run, dest, v)
+    if cfg.run.docker_platform:
+        os.environ["DOCKER_DEFAULT_PLATFORM"] = cfg.run.docker_platform
+    return cfg
+
+
 def handle_batch_command(args) -> int:
+    cfg = resolve_run_config(args)
+    if cfg is None:
+        # Legacy path: resolve credentials from env / host + --auth.
+        try:
+            auth_mode = resolve_auth_mode(args.auth)
+        except RuntimeError as e:
+            logging.error(str(e))
+            return 1
+        logging.info(f"Codex backend | auth={auth_mode}")
+        dataset = args.dataset or Path("./dataset.jsonl")
+        outputs_root = args.outputs_root or Path("./outputs")
+        timeout = args.timeout or "45m"
+        agent_timeout = args.agent_timeout or "30m"
+        strategy = args.strategy or "default"
+        max_workers = args.max_workers or 1
+        max_cost = args.max_cost_usd if args.max_cost_usd is not None else 10.0
+        tool_limits = args.tool_limits
+    else:
+        # Config-driven: skip the env credential preflight; auth/model/effort come
+        # from cfg (threaded into the runner below).
+        auth_mode = {"api_key": "api-key", "subscription": "subscription"}[cfg.auth.method]
+        logging.info(f"Codex backend | config-driven | auth={auth_mode} | model={cfg.model}")
+        dataset = Path(cfg.run.dataset)
+        outputs_root = Path(cfg.run.outputs_root)
+        timeout = cfg.run.timeout
+        agent_timeout = cfg.run.agent_timeout
+        strategy = cfg.run.strategy
+        max_workers = cfg.run.max_workers
+        max_cost = cfg.run.max_cost_usd
+        tool_limits = cfg.run.tool_limits
     try:
-        auth_mode = resolve_auth_mode(args.auth)
-    except RuntimeError as e:
-        logging.error(str(e))
-        return 1
-    logging.info(f"Codex backend | auth={auth_mode}")
-    try:
-        tool_limits_dict, max_total_calls = parse_tool_limits(getattr(args, "tool_limits", None))
+        tool_limits_dict, max_total_calls = parse_tool_limits(tool_limits)
         summary = run_batch_cves(
-            dataset_path=args.dataset,
-            outputs_root=args.outputs_root,
-            max_workers=args.max_workers,
-            timeout_seconds=parse_timeout(args.timeout),
-            claude_timeout_seconds=parse_timeout(args.agent_timeout),
-            strategy=args.strategy,
+            dataset_path=dataset,
+            outputs_root=outputs_root,
+            max_workers=max_workers,
+            timeout_seconds=parse_timeout(timeout),
+            claude_timeout_seconds=parse_timeout(agent_timeout),
+            strategy=strategy,
             api_provider=args.api_provider,
             auth_mode=auth_mode,
             resume=args.resume,
@@ -146,12 +195,13 @@ def handle_batch_command(args) -> int:
             keep_containers=args.keep_containers,
             tool_limits=tool_limits_dict,
             max_total_tool_calls=max_total_calls,
-            max_cost_usd=getattr(args, "max_cost_usd", 10.0),
+            max_cost_usd=max_cost,
             enable_detailed_logging=getattr(args, "enable_detailed_logging", True),
             save_process_logs=getattr(args, "save_process_logs", False),
             allow_git_diff_fallback=getattr(args, "allow_git_diff_fallback", False),
             settings_file=getattr(args, "settings", None),
             port=args.port,
+            cfg=cfg,
         )
         print(f"\nBatch complete: {summary.get('successful', 0)}/{summary.get('total_processed', 0)} "
               f"({summary.get('success_rate', 0):.0%})")
@@ -162,35 +212,59 @@ def handle_batch_command(args) -> int:
 
 
 def handle_single_command(args) -> int:
-    try:
-        auth_mode = resolve_auth_mode(args.auth)
-    except RuntimeError as e:
-        logging.error(str(e))
-        return 1
-    records = load_dataset(args.dataset)
+    cfg = resolve_run_config(args)
+    if cfg is None:
+        # Legacy path: resolve credentials from env / host + --auth.
+        try:
+            auth_mode = resolve_auth_mode(args.auth)
+        except RuntimeError as e:
+            logging.error(str(e))
+            return 1
+        dataset = args.dataset or Path("./dataset.jsonl")
+        outputs_root = args.outputs_root or Path("./outputs")
+        timeout = args.timeout or "45m"
+        agent_timeout = args.agent_timeout or "30m"
+        strategy = args.strategy or "default"
+        max_cost = args.max_cost_usd if args.max_cost_usd is not None else 10.0
+        tool_limits = args.tool_limits
+    else:
+        # Config-driven: skip the env credential preflight; auth/model/effort come
+        # from cfg (threaded into the runner below).
+        auth_mode = {"api_key": "api-key", "subscription": "subscription"}[cfg.auth.method]
+        logging.info(f"Codex backend | config-driven | auth={auth_mode} | model={cfg.model}")
+        dataset = Path(cfg.run.dataset)
+        outputs_root = Path(cfg.run.outputs_root)
+        timeout = cfg.run.timeout
+        agent_timeout = cfg.run.agent_timeout
+        strategy = cfg.run.strategy
+        max_cost = cfg.run.max_cost_usd
+        tool_limits = cfg.run.tool_limits
+
+    records = load_dataset(dataset)
     record = next((r for r in records if args.cve_id in (r.cve_id, r.problem_id)), None)
     if not record:
         logging.error(f"CVE not found: {args.cve_id}")
         return 1
     try:
-        tool_limits_dict, max_total_calls = parse_tool_limits(getattr(args, "tool_limits", None))
+        tool_limits_dict, max_total_calls = parse_tool_limits(tool_limits)
         result = run_single_cve(
             record=record,
-            outputs_root=args.outputs_root,
-            timeout_seconds=parse_timeout(args.timeout),
-            claude_timeout_seconds=parse_timeout(args.agent_timeout),
-            strategy=args.strategy,
+            outputs_root=outputs_root,
+            timeout_seconds=parse_timeout(timeout),
+            claude_timeout_seconds=parse_timeout(agent_timeout),
+            strategy=strategy,
             api_provider=args.api_provider,
             auth_mode=auth_mode,
             keep_container=args.keep_container,
             tool_limits=tool_limits_dict,
             max_total_tool_calls=max_total_calls,
-            max_cost_usd=getattr(args, "max_cost_usd", 10.0),
+            max_cost_usd=max_cost,
             enable_detailed_logging=getattr(args, "enable_detailed_logging", True),
             save_process_logs=getattr(args, "save_process_logs", False),
             allow_git_diff_fallback=getattr(args, "allow_git_diff_fallback", False),
             settings_file=getattr(args, "settings", None),
             port=args.port,
+            cfg=cfg,
         )
         status = "success" if result["is_success"] else f"fail ({result.get('stage','?')})"
         print(f"\nCVE {args.cve_id}: {status}")

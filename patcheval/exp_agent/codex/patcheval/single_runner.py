@@ -61,7 +61,8 @@ def run_single_cve(record: CVERecord,
                    save_process_logs: bool = False,
                    allow_git_diff_fallback: bool = False,
                    settings_file: Optional[str] = None,
-                   port: str = "8082") -> Dict[str, Any]:
+                   port: str = "8082",
+                   cfg=None) -> Dict[str, Any]:
 
     if semaphore is None:
         semaphore = threading.Semaphore(1)
@@ -89,8 +90,13 @@ def run_single_cve(record: CVERecord,
     agent = None
 
     try:
-        result["stage"] = "api_check"
-        api_key = _resolve_codex_credentials(auth_mode)
+        if cfg is not None:
+            # Config-driven: credentials (and model/effort) come from cfg via the
+            # runner; skip the env/host credential resolution entirely.
+            api_key = ""
+        else:
+            result["stage"] = "api_check"
+            api_key = _resolve_codex_credentials(auth_mode)
 
         result["stage"] = "docker_setup"
         pull_image_with_retry(record.image_name, semaphore)
@@ -110,6 +116,7 @@ def run_single_cve(record: CVERecord,
             enable_detailed_logging=enable_detailed_logging,
             allow_git_diff_fallback=allow_git_diff_fallback,
             settings_file=settings_file,
+            cfg=cfg,
         )
 
         result["stage"] = "environment_setup"
