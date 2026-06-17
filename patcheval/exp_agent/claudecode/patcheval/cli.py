@@ -43,6 +43,20 @@ def resolve_run_config(args):
     return cfg
 
 
+def _apply_config_to_args(args, cfg):
+    """Config mode: copy merged cfg.run values onto args. Path-like fields are
+    coerced to pathlib.Path so downstream .exists()/.mkdir() calls work."""
+    args.dataset = Path(cfg.run.dataset)
+    args.outputs_root = Path(cfg.run.outputs_root)
+    args.max_workers = cfg.run.max_workers
+    args.timeout = cfg.run.timeout
+    args.claude_timeout = cfg.run.agent_timeout
+    args.strategy = cfg.run.strategy
+    args.tool_limits = cfg.run.tool_limits
+    args.max_cost_usd = cfg.run.max_cost_usd
+    return args
+
+
 def get_available_strategies() -> list[str]:
     
     templates_dir = Path(__file__).parent.parent / "templates"
@@ -205,14 +219,7 @@ def handle_batch_command(args):
         # Config mode: merged run-level values live in cfg.run (config + CLI
         # overrides). Credentials are inline and already validated by
         # load_config(), so skip the legacy get_api_key_and_validate() preflight.
-        args.dataset = cfg.run.dataset
-        args.outputs_root = Path(cfg.run.outputs_root)
-        args.max_workers = cfg.run.max_workers
-        args.timeout = cfg.run.timeout
-        args.claude_timeout = cfg.run.agent_timeout
-        args.strategy = cfg.run.strategy
-        args.tool_limits = cfg.run.tool_limits
-        args.max_cost_usd = cfg.run.max_cost_usd
+        _apply_config_to_args(args, cfg)
     else:
         # Legacy mode: reapply original argparse defaults for any unset flag
         # (defaults are now None so config-mode "unset" is detectable).
@@ -287,13 +294,7 @@ def handle_single_command(args):
         # Config mode: merged run-level values live in cfg.run (config + CLI
         # overrides). Credentials are inline and already validated by
         # load_config(), so skip the legacy get_api_key_and_validate() preflight.
-        args.dataset = cfg.run.dataset
-        args.outputs_root = Path(cfg.run.outputs_root)
-        args.timeout = cfg.run.timeout
-        args.claude_timeout = cfg.run.agent_timeout
-        args.strategy = cfg.run.strategy
-        args.tool_limits = cfg.run.tool_limits
-        args.max_cost_usd = cfg.run.max_cost_usd
+        _apply_config_to_args(args, cfg)
     else:
         # Legacy mode: reapply original argparse defaults for any unset flag
         # (defaults are now None so config-mode "unset" is detectable).

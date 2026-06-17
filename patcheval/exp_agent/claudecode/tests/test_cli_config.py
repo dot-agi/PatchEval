@@ -1,6 +1,8 @@
 import argparse
+from pathlib import Path
+
 import yaml
-from patcheval.cli import resolve_run_config
+from patcheval.cli import resolve_run_config, _apply_config_to_args
 
 
 def _write_cfg(tmp_path):
@@ -43,3 +45,16 @@ def test_cli_flag_overrides_config(tmp_path):
 def test_no_config_returns_none(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)              # no ./config.yaml in this cwd
     assert resolve_run_config(_ns(config=None)) is None
+
+
+def test_config_mode_coerces_paths(tmp_path):
+    # Docker-free: config mode must yield pathlib.Path for dataset/outputs_root
+    # so downstream load_dataset().exists() and outputs_root.mkdir() work.
+    p = _write_cfg(tmp_path)
+    args = _ns(config=str(p))
+    cfg = resolve_run_config(args)
+    _apply_config_to_args(args, cfg)
+    assert isinstance(args.dataset, Path)
+    assert isinstance(args.outputs_root, Path)
+    assert str(args.dataset) == "custom.jsonl"
+    assert args.outputs_root == Path(cfg.run.outputs_root)
