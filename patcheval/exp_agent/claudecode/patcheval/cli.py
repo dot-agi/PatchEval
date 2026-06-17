@@ -22,6 +22,25 @@ from .batch_runner import run_batch_cves
 from .single_runner import run_single_cve
 from .docker_utils import cleanup_containers_by_prefix
 from .dataset import load_dataset
+from .config import load_config
+
+
+def resolve_run_config(args):
+    """Return an AgentRunConfig if config mode is active, else None (legacy mode)."""
+    cfg_path = getattr(args, "config", None) or ("config.yaml" if os.path.exists("config.yaml") else None)
+    if not cfg_path:
+        return None
+    cfg = load_config(cfg_path)                         # validates inline creds itself
+    for attr, dest in [("dataset", "dataset"), ("outputs_root", "outputs_root"),
+                       ("max_workers", "max_workers"), ("strategy", "strategy"), ("timeout", "timeout"),
+                       ("claude_timeout", "agent_timeout"), ("tool_limits", "tool_limits"),
+                       ("max_cost_usd", "max_cost_usd")]:
+        v = getattr(args, attr, None)
+        if v is not None:
+            setattr(cfg.run, dest, v)                   # explicit CLI flag overrides config
+    if cfg.run.docker_platform:
+        os.environ["DOCKER_DEFAULT_PLATFORM"] = cfg.run.docker_platform
+    return cfg
 
 
 def get_available_strategies() -> list[str]:
@@ -50,41 +69,43 @@ def parse_args() -> argparse.Namespace:
     
     # Batch command
     batch_parser = subparsers.add_parser("batch")
-    batch_parser.add_argument("--dataset", type=Path, default="./dataset.jsonl")
-    batch_parser.add_argument("--outputs-root", type=Path, default="./outputs")
-    batch_parser.add_argument("--max-workers", type=int, default=1)
-    batch_parser.add_argument("--timeout", type=str, default="45m")
-    batch_parser.add_argument("--claude-timeout", type=str, default="30m")
+    batch_parser.add_argument("--config", type=str, default=None)
+    batch_parser.add_argument("--dataset", type=Path, default=None)
+    batch_parser.add_argument("--outputs-root", type=Path, default=None)
+    batch_parser.add_argument("--max-workers", type=int, default=None)
+    batch_parser.add_argument("--timeout", type=str, default=None)
+    batch_parser.add_argument("--claude-timeout", type=str, default=None)
     batch_parser.add_argument("--limit", type=int)
     batch_parser.add_argument("--resume", action="store_true")
     batch_parser.add_argument("--keep-containers", action="store_true")
-    batch_parser.add_argument("--strategy", choices=get_available_strategies(), default="iterative")
+    batch_parser.add_argument("--strategy", choices=get_available_strategies(), default=None)
     batch_parser.add_argument("--api-provider", choices=["anthropic", "bedrock", "vertex"], default="anthropic")
-    
 
-    batch_parser.add_argument("--tool-limits", type=str, help="(tool1:limit1,tool2:limit2 or total:500)")
-    batch_parser.add_argument("--max-cost-usd", type=float, default=10.0)
+
+    batch_parser.add_argument("--tool-limits", type=str, default=None, help="(tool1:limit1,tool2:limit2 or total:500)")
+    batch_parser.add_argument("--max-cost-usd", type=float, default=None)
     batch_parser.add_argument("--enable-detailed-logging", action="store_true", default=True,)
     batch_parser.add_argument("--save-process-logs", action="store_true")
     batch_parser.add_argument("--allow-git-diff-fallback", action="store_true")
     batch_parser.add_argument("--settings", type=str)
     batch_parser.add_argument("--port", type=str)
     
-    # Single command  
+    # Single command
     single_parser = subparsers.add_parser("single")
-    single_parser.add_argument("--dataset", type=Path, default="./dataset.jsonl")
-    single_parser.add_argument("--outputs-root", type=Path, default="./outputs")
+    single_parser.add_argument("--config", type=str, default=None)
+    single_parser.add_argument("--dataset", type=Path, default=None)
+    single_parser.add_argument("--outputs-root", type=Path, default=None)
     single_parser.add_argument("--cve-id", type=str, required=True)
-    single_parser.add_argument("--timeout", type=str, default="45m")
-    single_parser.add_argument("--claude-timeout", type=str, default="30m")
+    single_parser.add_argument("--timeout", type=str, default=None)
+    single_parser.add_argument("--claude-timeout", type=str, default=None)
     single_parser.add_argument("--keep-container", action="store_true")
-    single_parser.add_argument("--strategy", choices=get_available_strategies(), default="iterative")
+    single_parser.add_argument("--strategy", choices=get_available_strategies(), default=None)
     single_parser.add_argument("--api-provider", choices=["anthropic", "bedrock", "vertex"], default="anthropic")
     single_parser.add_argument("--interactive", action="store_true")
-    
 
-    single_parser.add_argument("--tool-limits", type=str)
-    single_parser.add_argument("--max-cost-usd", type=float, default=10.0)
+
+    single_parser.add_argument("--tool-limits", type=str, default=None)
+    single_parser.add_argument("--max-cost-usd", type=float, default=None)
     single_parser.add_argument("--enable-detailed-logging", action="store_true", default=True)
     single_parser.add_argument("--save-process-logs", action="store_true")
     single_parser.add_argument("--allow-git-diff-fallback", action="store_true")
@@ -141,9 +162,14 @@ def setup_logging(level=logging.INFO):
 
 def get_api_key_and_validate(api_provider: str) -> str:
     if api_provider == "anthropic":
-        api_key = os.getenv("ANTHROPIC_API_KEY")
+        # Prefer the subscription OAuth token (from `claude setup-token`); fall back
+        # to a raw API key. The in-container Claude Code consumes whichever is set.
+        api_key = os.getenv("CLAUDE_CODE_OAUTH_TOKEN") or os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
-            raise RuntimeError("Missing ANTHROPIC_API_KEY environment variable")
+            raise RuntimeError(
+                "Missing credentials: set CLAUDE_CODE_OAUTH_TOKEN (subscription token "
+                "from `claude setup-token`) or ANTHROPIC_API_KEY"
+            )
     elif api_provider == "bedrock":
         aws_region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION")
         aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
@@ -173,16 +199,47 @@ def get_api_key_and_validate(api_provider: str) -> str:
 
 def handle_batch_command(args):
     """Handle batch processing command."""
+    cfg = resolve_run_config(args)
+
+    if cfg is not None:
+        # Config mode: merged run-level values live in cfg.run (config + CLI
+        # overrides). Credentials are inline and already validated by
+        # load_config(), so skip the legacy get_api_key_and_validate() preflight.
+        args.dataset = cfg.run.dataset
+        args.outputs_root = Path(cfg.run.outputs_root)
+        args.max_workers = cfg.run.max_workers
+        args.timeout = cfg.run.timeout
+        args.claude_timeout = cfg.run.agent_timeout
+        args.strategy = cfg.run.strategy
+        args.tool_limits = cfg.run.tool_limits
+        args.max_cost_usd = cfg.run.max_cost_usd
+    else:
+        # Legacy mode: reapply original argparse defaults for any unset flag
+        # (defaults are now None so config-mode "unset" is detectable).
+        if args.dataset is None:
+            args.dataset = Path("./dataset.jsonl")
+        if args.outputs_root is None:
+            args.outputs_root = Path("./outputs")
+        if args.max_workers is None:
+            args.max_workers = 1
+        if args.timeout is None:
+            args.timeout = "45m"
+        if args.claude_timeout is None:
+            args.claude_timeout = "30m"
+        if args.strategy is None:
+            args.strategy = "iterative"
+        if args.max_cost_usd is None:
+            args.max_cost_usd = 10.0
+        # Check API credentials
+        try:
+            api_key = get_api_key_and_validate(args.api_provider)
+        except RuntimeError as e:
+            logging.error(str(e))
+            return 1
+
     timeout_seconds = parse_timeout(args.timeout)
     claude_timeout_seconds = parse_timeout(args.claude_timeout)
-    
-    # Check API credentials  
-    try:
-        api_key = get_api_key_and_validate(args.api_provider)
-    except RuntimeError as e:
-        logging.error(str(e))
-        return 1
-    
+
     try:
         tool_limits_dict, max_total_calls = parse_tool_limits(getattr(args, 'tool_limits', None))
         
@@ -204,9 +261,10 @@ def handle_batch_command(args):
             save_process_logs=getattr(args, 'save_process_logs', False),
             allow_git_diff_fallback=getattr(args, 'allow_git_diff_fallback', False),
             settings_file=getattr(args, 'settings', None),
-            port=args.port
+            port=args.port,
+            cfg=cfg
         )
-        
+
         print(f"\\n🎉 Batch processing completed!")
         print(f"   Total: {summary['total_processed']}")
         print(f"   Success: {summary['successful']}")
@@ -223,16 +281,44 @@ def handle_batch_command(args):
 
 def handle_single_command(args):
     """Handle single CVE processing command."""
+    cfg = resolve_run_config(args)
+
+    if cfg is not None:
+        # Config mode: merged run-level values live in cfg.run (config + CLI
+        # overrides). Credentials are inline and already validated by
+        # load_config(), so skip the legacy get_api_key_and_validate() preflight.
+        args.dataset = cfg.run.dataset
+        args.outputs_root = Path(cfg.run.outputs_root)
+        args.timeout = cfg.run.timeout
+        args.claude_timeout = cfg.run.agent_timeout
+        args.strategy = cfg.run.strategy
+        args.tool_limits = cfg.run.tool_limits
+        args.max_cost_usd = cfg.run.max_cost_usd
+    else:
+        # Legacy mode: reapply original argparse defaults for any unset flag
+        # (defaults are now None so config-mode "unset" is detectable).
+        if args.dataset is None:
+            args.dataset = Path("./dataset.jsonl")
+        if args.outputs_root is None:
+            args.outputs_root = Path("./outputs")
+        if args.timeout is None:
+            args.timeout = "45m"
+        if args.claude_timeout is None:
+            args.claude_timeout = "30m"
+        if args.strategy is None:
+            args.strategy = "iterative"
+        if args.max_cost_usd is None:
+            args.max_cost_usd = 10.0
+        # Check API credentials
+        try:
+            api_key = get_api_key_and_validate(args.api_provider)
+        except RuntimeError as e:
+            logging.error(str(e))
+            return 1
+
     timeout_seconds = parse_timeout(args.timeout)
     claude_timeout_seconds = parse_timeout(args.claude_timeout)
-    
-    # Check API credentials
-    try:
-        api_key = get_api_key_and_validate(args.api_provider)
-    except RuntimeError as e:
-        logging.error(str(e))
-        return 1
-    
+
     # Load specific CVE record
     records = load_dataset(args.dataset)
     record = None
@@ -263,9 +349,10 @@ def handle_single_command(args):
             save_process_logs=getattr(args, 'save_process_logs', False),
             allow_git_diff_fallback=getattr(args, 'allow_git_diff_fallback', False),
             settings_file=getattr(args, 'settings', None),
-            port = args.port
+            port=args.port,
+            cfg=cfg
         )
-        
+
         if result["is_success"]:
             print(f"\\n✅ CVE repair successful: {args.cve_id}")
             print(f"   Duration: {result.get('agent_duration', 0):.1f}s")

@@ -42,8 +42,9 @@ def run_single_cve(record: CVERecord,
                   save_process_logs: bool = False,
                   allow_git_diff_fallback: bool = False,
                   settings_file: Optional[str] = None,
-                  port: str="8082") -> Dict[str, Any]:
-    
+                  port: str="8082",
+                  cfg=None) -> Dict[str, Any]:
+
     if semaphore is None:
         semaphore = threading.Semaphore(1)
     
@@ -71,10 +72,18 @@ def run_single_cve(record: CVERecord,
 
         
         result["stage"] = "api_check"
-        if api_provider == "anthropic":
-            api_key = os.getenv("ANTHROPIC_API_KEY")
+        if cfg is not None:
+            # Config mode: credentials are provided inline via cfg and were
+            # already validated by load_config(); skip the legacy env-based
+            # credential preflight. (Building the runner from cfg is Task B2.)
+            api_key = None
+        elif api_provider == "anthropic":
+            api_key = os.getenv("CLAUDE_CODE_OAUTH_TOKEN") or os.getenv("ANTHROPIC_API_KEY")
             if not api_key:
-                raise RuntimeError("Missing ANTHROPIC_API_KEY environment variable")
+                raise RuntimeError(
+                    "Missing credentials: set CLAUDE_CODE_OAUTH_TOKEN (subscription "
+                    "token from `claude setup-token`) or ANTHROPIC_API_KEY"
+                )
         elif api_provider == "bedrock":
             aws_region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION")
             aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
