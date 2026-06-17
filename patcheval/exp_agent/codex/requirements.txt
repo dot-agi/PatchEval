@@ -1,3 +1,5 @@
 # Dependencies for the Codex PatchEval agent (Python 3.10+)
 docker>=6.0.0
 tqdm>=4.0.0
+PyYAML>=6.0
+pytest>=8.0.0
