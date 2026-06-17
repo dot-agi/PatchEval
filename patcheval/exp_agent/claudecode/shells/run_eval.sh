@@ -12,15 +12,40 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-prefix=$1
+prefix="${1:?usage: run_eval.sh <prefix> (e.g. opus48_10)}"
 
-python evaluation/process_data.py \
+# Run from the claudecode project root regardless of where this is invoked.
+cd "$(dirname "$0")/.."
+
+# Prefer the local venv (it has the docker SDK). DATASET scopes which CVEs to
+# evaluate (defaults to the full dataset.jsonl); for a subset run pass the same
+# subset file used for inference, e.g. DATASET=dataset_subset10.jsonl.
+PY="python"; [ -x ".venv/bin/python" ] && PY=".venv/bin/python"
+
+# Config-aware: when config.yaml exists (git-ignored) and DATASET isn't already
+# set in the env, read dataset + docker platform from it. A null docker_platform
+# means native (we do NOT force linux/amd64); set it to linux/amd64 to opt in.
+if [ -z "${DATASET:-}" ] && [ -f config.yaml ]; then
+  DATASET="$("$PY" -c 'import yaml; c=yaml.safe_load(open("config.yaml")).get("run",{}) or {}; print(c.get("dataset","dataset.jsonl"))')"
+  _PLAT="$("$PY" -c 'import yaml; c=yaml.safe_load(open("config.yaml")).get("run",{}) or {}; print(c.get("docker_platform") or "")')"
+  [ -n "$_PLAT" ] && export DOCKER_DEFAULT_PLATFORM="$_PLAT"
+fi
+DATASET="${DATASET:-dataset.jsonl}"
+EVAL_WORKERS="${EVAL_WORKERS:-4}"
+
+echo "Eval prefix: $prefix   dataset: $DATASET   workers: $EVAL_WORKERS   python: $PY"
+
+# 1) Reshape outputs/<prefix>/patches/*.patch -> a process JSONL for the evaluator,
+#    scoped to the CVEs in $DATASET (NOT all 229).
+"$PY" evaluation/process_data.py \
     --output_dir outputs/${prefix}/patches \
+    --dataset_path "$DATASET" \
     --process_data_path evaluation/process_datas/${prefix}_process.jsonl \
     --test_data_path ../../datasets/patcheval_dataset.json
 
-
-python ../../evaluation/run_evaluation.py \
- --output results/${prefix} \
- --patch_file evaluation/process_datas/${prefix}_process.jsonl \
- --input_file ../../datasets/input.json
+# 2) Apply each patch in its CVE container and run the PoC / unit tests.
+"$PY" ../../evaluation/run_evaluation.py \
+    --output ${prefix} \
+    --patch_file evaluation/process_datas/${prefix}_process.jsonl \
+    --input_file ../../datasets/input.json \
+    --max_workers "$EVAL_WORKERS"

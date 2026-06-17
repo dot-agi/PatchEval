@@ -1,0 +1,17 @@
+# Copy to config.yaml and fill in credentials (config.yaml is git-ignored).
+agent: claude-code
+model: claude-opus-4-8
+reasoning: max                 # low|medium|high|xhigh|max
+auth:
+  method: subscription         # subscription | api_key | bedrock | vertex
+  credentials:
+    oauth_token: REPLACE_ME    # from: claude setup-token
+run:
+  dataset: dataset.jsonl
+  outputs_root: ./outputs/run
+  strategy: default
+  max_workers: 4
+  timeout: 45m
+  agent_timeout: 30m
+  docker_platform: null        # null = native; or linux/amd64
+  use_harness_skills: true

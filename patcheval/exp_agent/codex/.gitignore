@@ -30,3 +30,6 @@ pull_images.log
 pull.log
 
 .DS_Store
+
+# Local run config (copy from config.example.yaml; contains credentials)
+config.yaml

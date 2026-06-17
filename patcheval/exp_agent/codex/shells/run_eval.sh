@@ -20,9 +20,17 @@ prefix="${1:?usage: run_eval.sh <prefix> (e.g. codex_smoke)}"
 cd "$(dirname "$0")/.."
 
 PY="python"; [ -x ".venv/bin/python" ] && PY=".venv/bin/python"
+
+# Config-aware: when config.yaml exists (git-ignored) and DATASET isn't already
+# set in the env, read dataset + docker platform from it. A null docker_platform
+# means native (we do NOT force linux/amd64); set it to linux/amd64 to opt in.
+if [ -z "${DATASET:-}" ] && [ -f config.yaml ]; then
+  DATASET="$("$PY" -c 'import yaml; c=yaml.safe_load(open("config.yaml")).get("run",{}) or {}; print(c.get("dataset","dataset.jsonl"))')"
+  _PLAT="$("$PY" -c 'import yaml; c=yaml.safe_load(open("config.yaml")).get("run",{}) or {}; print(c.get("docker_platform") or "")')"
+  [ -n "$_PLAT" ] && export DOCKER_DEFAULT_PLATFORM="$_PLAT"
+fi
 DATASET="${DATASET:-dataset.jsonl}"           # scope to the CVEs you generated for
 EVAL_WORKERS="${EVAL_WORKERS:-4}"
-export DOCKER_DEFAULT_PLATFORM="${DOCKER_DEFAULT_PLATFORM:-linux/amd64}"
 
 echo "Eval prefix: $prefix   dataset: $DATASET   workers: $EVAL_WORKERS   python: $PY"
 

@@ -1,0 +1,17 @@
+# Copy to config.yaml and fill in credentials (config.yaml is git-ignored).
+agent: codex
+model: gpt-5.5
+reasoning: xhigh               # low|medium|high|xhigh  (no "max" for codex)
+auth:
+  method: api_key             # api_key | subscription
+  credentials:
+    api_key: REPLACE_ME       # OpenAI/Codex API key
+run:
+  dataset: dataset.jsonl
+  outputs_root: ./outputs/run
+  strategy: default
+  max_workers: 4
+  timeout: 45m
+  agent_timeout: 30m
+  docker_platform: null
+  use_harness_skills: true
