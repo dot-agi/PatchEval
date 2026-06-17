@@ -118,16 +118,32 @@ def run_single_cve(record: CVERecord,
         result["container_id"] = container_id
         
         
-        claude = ClaudeRunnerEnhanced(
-            container_id, 
-            record.work_dir,
-            tool_limits=tool_limits,
-            max_total_tool_calls=max_total_tool_calls,
-            max_cost_usd=max_cost_usd,
-            enable_detailed_logging=enable_detailed_logging,
-            allow_git_diff_fallback=allow_git_diff_fallback,
-            settings_file=settings_file
-        )
+        if cfg is not None:
+            # Config mode: build the runner from the validated cfg so it derives
+            # in-container auth/model/effort and the harness-skills gate from it.
+            claude = ClaudeRunnerEnhanced(
+                container_id,
+                record.work_dir,
+                tool_limits=tool_limits,
+                max_total_tool_calls=max_total_tool_calls,
+                max_cost_usd=max_cost_usd,
+                enable_detailed_logging=enable_detailed_logging,
+                allow_git_diff_fallback=allow_git_diff_fallback,
+                settings_file=settings_file,
+                cfg=cfg
+            )
+        else:
+            # Legacy mode: unchanged host-env-driven construction (no cfg).
+            claude = ClaudeRunnerEnhanced(
+                container_id,
+                record.work_dir,
+                tool_limits=tool_limits,
+                max_total_tool_calls=max_total_tool_calls,
+                max_cost_usd=max_cost_usd,
+                enable_detailed_logging=enable_detailed_logging,
+                allow_git_diff_fallback=allow_git_diff_fallback,
+                settings_file=settings_file
+            )
         
         if not claude.setup_environment(record, strategy, api_key, api_provider, port):
             pass

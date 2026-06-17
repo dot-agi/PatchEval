@@ -39,6 +39,18 @@ else
 fi
 
 
+# The defending-code harness skills shell out to `python3 .claude/skills/_lib/checkpoint.py`
+# and use git; make sure both exist (best-effort, never abort the install on failure).
+if ! command -v python3 &> /dev/null || ! command -v git &> /dev/null; then
+    echo "📦 Ensuring python3 + git are installed (needed by the harness skills)..."
+    apt-get install -y python3 git >/dev/null 2>&1 \
+        || { apt-get update >/dev/null 2>&1 && apt-get install -y python3 git >/dev/null 2>&1; } \
+        || true
+fi
+command -v python3 &> /dev/null && echo "✅ python3 $(python3 --version 2>&1 | awk '{print $2}')" || echo "⚠️  python3 not available"
+command -v git &> /dev/null && echo "✅ git $(git --version 2>&1 | awk '{print $3}')" || echo "⚠️  git not available"
+
+
 echo "🔧 Setting workspace permissions..."
 chown -R claude_user:claude_user /workspace 2>/dev/null || true
 
@@ -62,10 +74,9 @@ cat > ~/.bashrc << 'BASHEOF'
 export PATH="$HOME/.npm-global/bin:$PATH"
 export PATH=$PATH:/usr/local/go/bin
 
-# Claude Code API configuration
-export ANTHROPIC_BASE_URL='http://host.docker.internal:$PORT$'
-export ANTHROPIC_API_KEY='*****'
-export ANTHROPIC_AUTH_TOKEN='*******'
+# Claude Code auth + model + reasoning effort, rendered from the run config
+# (see patcheval/config.py: build_claude_auth_exports).
+{{AUTH_EXPORTS}}
 
 # Useful aliases
 alias ll='ls -la'
@@ -119,7 +130,12 @@ else
 fi
 
 echo "🔧 Environment: Node $(node --version), NPM $(npm --version)"
-echo "🔑 API configured: ${ANTHROPIC_API_KEY:0:10}***"
+if [ -n "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+    echo "🔑 Auth: Claude subscription OAuth token (CLAUDE_CODE_OAUTH_TOKEN set)"
+else
+    echo "⚠️  Auth: CLAUDE_CODE_OAUTH_TOKEN is empty"
+fi
+echo "🧠 Model: ${ANTHROPIC_MODEL:-default}, effort: ${CLAUDE_CODE_EFFORT_LEVEL:-default}"
 VERIFYEOF
 
 echo ""

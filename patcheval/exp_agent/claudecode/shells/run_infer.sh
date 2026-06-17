@@ -6,97 +6,86 @@
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-cleanup() {
-    kill -TERM -$$  
+#
+# Run the ClaudeCode experiment with the REAL Claude Opus 4.8 at maximum
+# reasoning effort, authenticated with the host's Claude subscription
+# (CLAUDE_CODE_OAUTH_TOKEN). No claude-code-proxy. See OPUS48_LOCAL_RUN.md.
+set -uo pipefail
+
+# cd to the claudecode project root (this script lives in shells/)
+cd "$(dirname "$0")/.."
+
+# --- config-first: if a run config exists, drive the whole batch from it ---
+# (auth/model/effort/run knobs all live in the YAML; see patcheval/config.py).
+PY=".venv/bin/python"; [ -x "$PY" ] || PY=python3
+CONFIG="${CONFIG:-config.yaml}"
+if [ -f "$CONFIG" ]; then
+    echo "Config-driven inference: $CONFIG  (python: $PY)"
+    "$PY" -m patcheval.cli batch --config "$CONFIG" --resume
+    exit $?
+fi
+
+# --- fallback (no $CONFIG present): legacy env / .env.local invocation ---
+# --- credentials: Claude subscription OAuth token (from `claude setup-token`) ---
+if [ -f .env.local ]; then
+    set -a; . ./.env.local; set +a
+fi
+if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+    echo "ERROR: CLAUDE_CODE_OAUTH_TOKEN is not set." >&2
+    echo "       Put it in .env.local (generate on the host with: claude setup-token)." >&2
     exit 1
-}
+fi
+# A stray API key on the host would be injected into the container and override
+# the subscription token - drop it.
+unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL 2>/dev/null || true
 
-trap cleanup SIGINT
-models=(
-    "gemini-2.5-pro"
-)
-#####
-prefix="_exp1"
-dataset="dataset"
-#####
-# prefix="_exp4"
-# dataset="dataset_nolocation"
-#####
-# prefix="_exp5"
-# dataset="dataset_nolocation"
+# --- model / effort / platform ---
+export ANTHROPIC_MODEL="${ANTHROPIC_MODEL:-claude-opus-4-8}"
+export CLAUDE_CODE_EFFORT_LEVEL="${CLAUDE_CODE_EFFORT_LEVEL:-max}"
+export DOCKER_DEFAULT_PLATFORM="${DOCKER_DEFAULT_PLATFORM:-linux/amd64}"  # CVE images are amd64
+export MY_MODEL="${MY_MODEL:-opus48}"                                     # container-name tag
 
+# --- dataset / output / parallelism ---
+DATASET="${DATASET:-dataset_subset.jsonl}"
+OUTDIR="${OUTDIR:-./outputs/opus48_smoke}"
+MAX_WORKERS="${MAX_WORKERS:-1}"
 
-run(){
-    modelname=$1
+# --- python: prefer the local venv that has the docker SDK ---
+PY="python"
+[ -x ".venv/bin/python" ] && PY=".venv/bin/python"
 
-    if [ "$modelname" == "xxx" ]; then
-        model="xxx"
-        base_url="xxx"
-        api_key="xxx"
-        PORT=8083
-    fi
-    ##########################
+echo "Model:    $ANTHROPIC_MODEL"
+echo "Effort:   $CLAUDE_CODE_EFFORT_LEVEL"
+echo "Platform: $DOCKER_DEFAULT_PLATFORM"
+echo "Dataset:  $DATASET"
+echo "Output:   $OUTDIR"
+echo "Workers:  $MAX_WORKERS"
+echo "Python:   $PY"
+echo ""
 
+mkdir -p "$OUTDIR"
+"$PY" -m patcheval.cli batch \
+    --dataset "$DATASET" \
+    --outputs-root "$OUTDIR" \
+    --strategy default \
+    --max-workers "$MAX_WORKERS" \
+    --tool-limits "total:200" \
+    --max-cost-usd 1000 \
+    --allow-git-diff-fallback \
+    --resume \
+    --save-process-logs
+rc=$?
 
-    PID=$(lsof -i :$PORT -t)
+# Best-effort cleanup of this run's work containers (naming: bench.<cve>.<MY_MODEL>.work)
+docker ps -aq --filter "name=bench." --filter "name=${MY_MODEL}" 2>/dev/null \
+    | xargs -r docker rm -f >/dev/null 2>&1 || true
 
-    if [ -z "$PID" ]; then
-        :
-    else
-        kill $PID
-        sleep 1
-        if ps -p $PID > /dev/null; then
-            kill -9 $PID
-        fi
-    fi
-    echo "start $modelname", key: $api_key, url: $base_url, api_version: $api_version, port: $PORT
-    cd claude-code-proxy || { echo "can't go into claude-code-proxy"; exit 1; }
-    # uv run claude-code-proxy 
-    mkdir ../logs
-    OPENAI_API_KEY=$api_key OPENAI_BASE_URL=$base_url BIG_MODEL=$model MIDDLE_MODEL=$model SMALL_MODEL=$model AZURE_API_VERSION=$api_version PORT=$PORT uv run claude-code-proxy > ../logs/${modelname}${prefix}.log 2>&1 &
-    PROCESS_PID=$!
-    echo "complete claude-code-proxy $PROCESS_PID"
-    cd ..
-    sleep 3
-    if ! ps -p $PROCESS_PID > /dev/null; then
-        exit 1
-    fi
-    mkdir -p ./outputs/${modelname}${prefix}
-    MY_MODEL=$model ANTHROPIC_API_KEY="temp_key" python -m patcheval.cli batch \
-        --tool-limits "total:100" \
-        --max-cost-usd 1000 \
-        --dataset ${dataset}.jsonl \
-        --outputs-root ./outputs/${modelname}${prefix}_test \
-        --save-process-logs \
-        --strategy default \
-        --max-workers 4 \
-        --port $PORT \
-        --allow-git-diff-fallback \
-        --resume \
-        --save-process-logs
-        #  > ./outputs/${modelname}${prefix}/output.log 2>&1 
-
-    if ps -p $PROCESS_PID > /dev/null; then
-        kill $PROCESS_PID
-        sleep 2
-        if ps -p $PROCESS_PID > /dev/null; then
-            kill -9 $PROCESS_PID
-        fi
-    fi
-    # bash shells/run_eval.sh ${modelname}${prefix}
-
-}
-
-for use_model in "${models[@]}"; do
-
-    run $use_model &
-
-done
-
-wait
+echo ""
+echo "Batch exit code: $rc"
+echo "Patch (if produced): $OUTDIR/patches/CVE-2021-21384.patch"

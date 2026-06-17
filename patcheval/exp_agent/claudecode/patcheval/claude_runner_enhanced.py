@@ -125,11 +125,20 @@ class ClaudeRunnerEnhanced:
                  max_cost_usd: float = 10.0,
                  enable_detailed_logging: bool = True,
                  allow_git_diff_fallback: bool = False,
-                 settings_file: Optional[str] = None):
+                 settings_file: Optional[str] = None,
+                 cfg=None):
         self.container_id = container_id
         self.work_dir = work_dir
         self.allow_git_diff_fallback = allow_git_diff_fallback
         self.settings_file = settings_file
+        # Config mode (Task B2): when an AgentRunConfig is supplied, the
+        # in-container auth/model/effort are derived from it. In legacy mode
+        # (cfg is None) the previous host-env-driven behavior is preserved.
+        self.cfg = cfg
+        if cfg is not None:
+            self.auth = cfg.auth
+            self.model = cfg.model
+            self.reasoning = cfg.reasoning
         self.logger = logging.getLogger(__name__)
         
         self.stream_monitor = RealTimeStreamMonitor(
@@ -170,13 +179,25 @@ class ClaudeRunnerEnhanced:
                 self.work_dir
             )
             
-            host_base_url = os.getenv('ANTHROPIC_BASE_URL', 'https://api.anthropic.com')
-            host_api_key = os.getenv('ANTHROPIC_API_KEY', '')
-            
-            install_script = install_script.replace("{{ANTHROPIC_BASE_URL}}", host_base_url)
-            install_script = install_script.replace("{{ANTHROPIC_API_KEY}}", host_api_key)
-            install_script = install_script.replace("{{ANTHROPIC_AUTH_TOKEN}}", host_api_key)
-            install_script = install_script.replace("$PORT$", port)
+            # Build the in-container Claude Code auth/model/effort exports as a
+            # single shell-quoted bash block. In config mode they come from the
+            # validated cfg; in legacy mode (cfg is None) we reproduce the prior
+            # behavior: the host's Claude subscription OAuth token plus the model
+            # and reasoning effort read from the host environment.
+            from .config import build_claude_auth_exports
+            if self.cfg is not None:
+                auth_block = build_claude_auth_exports(
+                    self.auth.method, self.auth.credentials, self.model, self.reasoning
+                )
+            else:  # legacy: subscription token + model/effort from host env
+                auth_block = build_claude_auth_exports(
+                    "subscription",
+                    {"oauth_token": os.getenv("CLAUDE_CODE_OAUTH_TOKEN", "")},
+                    os.getenv("ANTHROPIC_MODEL", "claude-opus-4-8"),
+                    os.getenv("CLAUDE_CODE_EFFORT_LEVEL", "max"),
+                )
+            install_script = install_script.replace("{{AUTH_EXPORTS}}", auth_block)
+            install_script = install_script.replace("$PORT$", port or "")
             
             self._write_file_to_container("/tmp/install_claude.sh", install_script)
             self._exec_in_container("chmod", "+x /tmp/install_claude.sh")
@@ -197,7 +218,7 @@ class ClaudeRunnerEnhanced:
             except Exception as e:
                 self.logger.warning(f"Claude install error: {e}")
                 self._log_process_step("claude_install_error", f"Claude install error: {e}")
-            ignore_content = f'echo -e "\n\n*.png\n*.jpg\n*.jpeg\n*.gif\n*.bmp\n*.tiff\n*.webp\n*.mp3\n*.mp4\n*.avi\n*.mov\n*.flv\n*.wmv\n*.pdf\n*.psd\n*.ai\n\n\n*.zip\n*.tar\n*.tar.gz\n*.tar.bz2\n*.7z\n*.rar\n*.gz\n*.bz2\n\n\n*.exe\n*.dll\n*.so\n*.dylib\n*.bin\n*.out\n\n*.db\n*.sqlite\n*.sqlite3\n\n/build/\n/dist/\n/bin/\n/out/\n\n\n.DS_Store\nThumbs.db\n\n# Go\nmyapp\nvendor/\n*.out\n*.test\ncoverage.out\nbuild/\ndist/\n\n# JavaScript/Node.js\nnode_modules/\ndist/\nbuild/\nout/\ndist-ssr/\n*.bundle.js\n*.bundle.js.map\n*.chunk.js\n*.chunk.js.map\nnpm-debug.log*\nyarn-debug.log*\nyarn-error.log*\n.pnpm-debug.log*\n.env.local\n.env.development.local\n.env.test.local\n.env.production.local\n.node-gyp/\n*.node\n\n# Python\n__pycache__/\n*.py[cod]\n*$py.class\nvenv/\nenv/\nENV/\n*.venv\n*.egg-info/\n.installed.cfg\n*.egg\ndist/\nbuild/\nwheelhouse/\n*.so\n*.pyd\n*.dll\n.coverage\nhtmlcov/\n.pytest_cache/\n\n*.blk\n*.idx\n*.jar\n*.md\n*package-lock.json\n\n\n" >> {self.work_dir}/.gitignore'.replace('\n', '\\n')
+            ignore_content = f'echo -e "\n\n*.png\n*.jpg\n*.jpeg\n*.gif\n*.bmp\n*.tiff\n*.webp\n*.mp3\n*.mp4\n*.avi\n*.mov\n*.flv\n*.wmv\n*.pdf\n*.psd\n*.ai\n\n\n*.zip\n*.tar\n*.tar.gz\n*.tar.bz2\n*.7z\n*.rar\n*.gz\n*.bz2\n\n\n*.exe\n*.dll\n*.so\n*.dylib\n*.bin\n*.out\n\n*.db\n*.sqlite\n*.sqlite3\n\n/build/\n/dist/\n/bin/\n/out/\n\n\n.DS_Store\nThumbs.db\n\n# Go\nmyapp\nvendor/\n*.out\n*.test\ncoverage.out\nbuild/\ndist/\n\n# JavaScript/Node.js\nnode_modules/\ndist/\nbuild/\nout/\ndist-ssr/\n*.bundle.js\n*.bundle.js.map\n*.chunk.js\n*.chunk.js.map\nnpm-debug.log*\nyarn-debug.log*\nyarn-error.log*\n.pnpm-debug.log*\n.env.local\n.env.development.local\n.env.test.local\n.env.production.local\n.node-gyp/\n*.node\n\n# Python\n__pycache__/\n*.py[cod]\n*$py.class\nvenv/\nenv/\nENV/\n*.venv\n*.egg-info/\n.installed.cfg\n*.egg\ndist/\nbuild/\nwheelhouse/\n*.so\n*.pyd\n*.dll\n.coverage\nhtmlcov/\n.pytest_cache/\n\n*.blk\n*.idx\n*.jar\n*.md\n*package-lock.json\n\n\n# defending-code harness artifacts (must stay out of the final patch)\n.claude/\nPATCHES/\n.patch-state/\n.triage-state/\nVULN-FINDINGS.json\nTRIAGE.json\nPATCHES.json\n\n\n" >> {self.work_dir}/.gitignore'.replace('\n', '\\n')
             self._exec_in_container('find /workspace/ -maxdepth 1 -type f -name "*.patch" -exec rm -v {} +')
             self._exec_in_container("bash", f"-c '{ignore_content}'")
             
@@ -280,8 +301,15 @@ class ClaudeRunnerEnhanced:
                     self.logger.error(f"copy file error: {e}")
                     self._log_process_step("settings_copy_error", f"copy file error: {str(e)}")
             
+            # Install the defending-code-reference-harness skills into the workspace
+            # so the agent can run /vuln-scan, /triage, /patch during the repair.
+            # In config mode this is gated on run.use_harness_skills; legacy mode
+            # (cfg is None) keeps installing them unconditionally.
+            if self.cfg is None or self.cfg.run.use_harness_skills:
+                self._install_harness_skills()
+
             self._exec_in_container("chown", f"-R claude_user:claude_user {self.work_dir}")
-        
+
             return True
             
         except Exception as e:
@@ -315,7 +343,10 @@ class ClaudeRunnerEnhanced:
             
            
             env_prefix = " ".join(env_vars) + " " if env_vars else ""
-            switch_user_cmd = f"su - claude_user -c 'cd {self.work_dir}  && {env_prefix}{cmd}'"
+            # `su -` is a login shell and normally sources ~/.bashrc via ~/.profile,
+            # but source it explicitly so the OAuth token / model / effort exports
+            # apply even on minimal base images.
+            switch_user_cmd = f"su - claude_user -c 'cd {self.work_dir} && . ~/.bashrc 2>/dev/null; {env_prefix}{cmd}'"
             
             
             try:
@@ -372,13 +403,16 @@ class ClaudeRunnerEnhanced:
             return False, str(e), ""
     
     def _build_claude_command(self, strategy: str) -> str:
-        command_name = strategy  
-        
+        command_name = strategy
+
+        # Config mode pins the model from cfg; legacy mode reads the host env.
+        model = self.model if getattr(self, "cfg", None) is not None else os.getenv("ANTHROPIC_MODEL", "claude-opus-4-8")
         claude_cmd_parts = [
             f"claude /{command_name}",
-            "--print",  
-            "--dangerously-skip-permissions",  
-            "--permission-mode bypassPermissions",  
+            "--model", model,
+            "--print",
+            "--dangerously-skip-permissions",
+            "--permission-mode bypassPermissions",
         ]
         
         
@@ -750,10 +784,51 @@ class ClaudeRunnerEnhanced:
         self._exec_in_container("mkdir", f"-p {dir_path}")
         
         cmd = f"docker exec -i {self.container_id} tee {file_path}"
-        subprocess.run(cmd, shell=True, input=content, text=True, 
+        subprocess.run(cmd, shell=True, input=content, text=True,
                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        
+
         self.logger.debug(f"success: {file_path}")
+
+    def _install_harness_skills(self) -> None:
+        """Copy the defending-code-reference-harness skills into the workspace.
+
+        The harness ships project-level skills under `.claude/skills/`. They are
+        copied into ``{work_dir}/.claude/skills/`` (kept out of the final patch via
+        .gitignore) so the in-container agent can invoke /vuln-scan, /triage,
+        /patch, etc. The skills resolve ``python3 .claude/skills/_lib/checkpoint.py``
+        relative to the working dir, which is why they must live in the workspace.
+        """
+        skills_dir = os.getenv(
+            "DEFENDING_CODE_SKILLS_DIR",
+            "third_party/defending-code-reference-harness/.claude/skills",
+        )
+        skills_path = Path(skills_dir)
+        if not skills_path.exists():
+            self.logger.warning(
+                f"defending-code skills not found at {skills_path.resolve()}; the agent "
+                "will fall back to a direct repair. Clone the harness into third_party/ "
+                "(see OPUS48_LOCAL_RUN.md)."
+            )
+            self._log_process_step("harness_skills_missing", str(skills_path))
+            return
+        try:
+            dest = f"{self.work_dir}/.claude/skills"
+            self._exec_in_container("mkdir", f"-p {dest}")
+            # Copy the *contents* of the host skills dir into the workspace skills dir.
+            cp_cmd = f"docker cp {skills_path}/. {self.container_id}:{dest}/"
+            result = subprocess.run(cp_cmd, shell=True, capture_output=True, text=True)
+            if result.returncode != 0:
+                self.logger.warning(f"failed to copy harness skills: {result.stderr.strip()}")
+                self._log_process_step("harness_skills_error", result.stderr.strip()[:200])
+                return
+            names = self._exec_in_container_with_output("bash", f"-c 'ls -1 {dest}'")
+            self.logger.info(f"installed defending-code skills into {dest}")
+            self._log_process_step(
+                "harness_skills_installed", names.replace("\n", " ").strip()[:300]
+            )
+        except Exception as e:
+            self.logger.warning(f"harness skill install error: {e}")
+            self._log_process_step("harness_skills_error", str(e)[:200])
     
     def _check_repair_success(self, output: str) -> bool:
         success_indicators = [
