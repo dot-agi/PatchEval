@@ -1,0 +1,32 @@
+# Generated artifacts
+outputs/**
+!outputs/.gitkeep
+evaluation_output/
+evaluation/process_datas/
+evaluation/process_data/*
+evaluation/results/*
+
+# Python
+__pycache__/
+patcheval/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Local secrets (Codex API key / OpenAI key) — never commit
+.env.local
+.env
+
+# Cloned third-party harness
+third_party/
+
+# Image-pull logs
+pull_images.log
+pull.log
+
+.DS_Store
