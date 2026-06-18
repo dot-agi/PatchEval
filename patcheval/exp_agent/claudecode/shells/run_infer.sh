@@ -21,6 +21,16 @@ set -uo pipefail
 # cd to the claudecode project root (this script lives in shells/)
 cd "$(dirname "$0")/.."
 
+# --- ensure the defending-code harness is present (source of the in-container skills) ---
+# Idempotent: clones only if missing. third_party/ is git-ignored, so a fresh checkout
+# needs this. Non-fatal: if the clone fails the agent still runs (without those skills).
+HARNESS_DIR="third_party/defending-code-reference-harness"
+if [ ! -d "$HARNESS_DIR/.claude/skills" ]; then
+    echo "[setup] fetching defending-code harness -> $HARNESS_DIR"
+    git clone --depth 1 https://github.com/anthropics/defending-code-reference-harness "$HARNESS_DIR" \
+        || echo "[setup] WARNING: harness clone failed; agent will run WITHOUT defending-code skills" >&2
+fi
+
 # --- config-first: if a run config exists, drive the whole batch from it ---
 # (auth/model/effort/run knobs all live in the YAML; see patcheval/config.py).
 PY=".venv/bin/python"; [ -x "$PY" ] || PY=python3
