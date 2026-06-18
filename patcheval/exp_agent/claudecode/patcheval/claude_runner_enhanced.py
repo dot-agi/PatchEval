@@ -189,13 +189,15 @@ class ClaudeRunnerEnhanced:
                 auth_block = build_claude_auth_exports(
                     self.auth.method, self.auth.credentials, self.model, self.reasoning
                 )
-            else:  # legacy: subscription token + model/effort from host env
-                auth_block = build_claude_auth_exports(
-                    "subscription",
-                    {"oauth_token": os.getenv("CLAUDE_CODE_OAUTH_TOKEN", "")},
-                    os.getenv("ANTHROPIC_MODEL", "claude-opus-4-8"),
-                    os.getenv("CLAUDE_CODE_EFFORT_LEVEL", "max"),
-                )
+            else:  # legacy (no config): pick auth method from whichever host env credential is present
+                model_env = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-8")
+                effort_env = os.getenv("CLAUDE_CODE_EFFORT_LEVEL", "max")
+                if os.getenv("CLAUDE_CODE_OAUTH_TOKEN"):
+                    auth_block = build_claude_auth_exports("subscription", {"oauth_token": os.getenv("CLAUDE_CODE_OAUTH_TOKEN")}, model_env, effort_env)
+                elif os.getenv("ANTHROPIC_API_KEY"):
+                    auth_block = build_claude_auth_exports("api_key", {"api_key": os.getenv("ANTHROPIC_API_KEY")}, model_env, effort_env)
+                else:
+                    auth_block = build_claude_auth_exports("subscription", {"oauth_token": ""}, model_env, effort_env)
             install_script = install_script.replace("{{AUTH_EXPORTS}}", auth_block)
             install_script = install_script.replace("$PORT$", port or "")
             

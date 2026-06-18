@@ -114,12 +114,12 @@ def _ex(name: str, value: str) -> str:
 
 
 def build_claude_auth_exports(method, creds, model, reasoning) -> str:
-    lines = [_ex("ANTHROPIC_MODEL", model), _ex("CLAUDE_CODE_EFFORT_LEVEL", reasoning)]
+    lines = [_ex("ANTHROPIC_MODEL", model), _ex("CLAUDE_CODE_EFFORT_LEVEL", reasoning),
+             "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_USE_BEDROCK CLAUDE_CODE_USE_VERTEX"]
     if method == "subscription":
-        lines += [_ex("CLAUDE_CODE_OAUTH_TOKEN", creds["oauth_token"]),
-                  "unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL"]
+        lines.append(_ex("CLAUDE_CODE_OAUTH_TOKEN", creds["oauth_token"]))
     elif method == "api_key":
-        lines += [_ex("ANTHROPIC_API_KEY", creds["api_key"]), "unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_BASE_URL"]
+        lines.append(_ex("ANTHROPIC_API_KEY", creds["api_key"]))
     elif method == "bedrock":
         lines += ["export CLAUDE_CODE_USE_BEDROCK=1", _ex("AWS_REGION", creds["aws_region"])]
         if "bearer_token" in creds:
@@ -127,13 +127,11 @@ def build_claude_auth_exports(method, creds, model, reasoning) -> str:
         else:
             lines += [_ex("AWS_ACCESS_KEY_ID", creds["aws_access_key_id"]),
                       _ex("AWS_SECRET_ACCESS_KEY", creds["aws_secret_access_key"])]
-        lines.append("unset CLAUDE_CODE_OAUTH_TOKEN")
     elif method == "vertex":
         lines += ["export CLAUDE_CODE_USE_VERTEX=1", _ex("CLOUD_ML_REGION", creds["region"]),
                   _ex("ANTHROPIC_VERTEX_PROJECT_ID", creds["project"])]
         lines.append(_ex("GOOGLE_APPLICATION_CREDENTIALS", creds["credentials_json_path"])
                      if "credentials_json_path" in creds else _ex("VERTEX_AUTH_TOKEN", creds["access_token"]))
-        lines.append("unset CLAUDE_CODE_OAUTH_TOKEN")
     return "\n".join(lines)
 
 
