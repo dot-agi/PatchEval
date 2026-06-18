@@ -297,28 +297,40 @@ catch wait result
 exit [lindex $result 3]
 """
     
-    @staticmethod 
+    @staticmethod
     def generate_settings_file() -> str:
 
+        # Pin Claude Opus 4.8 at maximum reasoning effort. `max` only persists via
+        # the CLAUDE_CODE_EFFORT_LEVEL env var (the effortLevel setting tops out at
+        # xhigh), so it is set in the `env` block rather than a dedicated key.
+        model = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-8")
+        effort = os.getenv("CLAUDE_CODE_EFFORT_LEVEL", "max")
+
         settings = {
+            "model": model,
             "permissions": {
                 "allow": [
-                    "Bash(*)", 
-                    "text_editor(*)", 
-                    "Read(*)", 
-                    "Grep(*)", 
-                    "Web Fetch(*)",  
-                    "Todo(*)", 
-                    "Memory(*)"  
+                    "Bash(*)",
+                    "Edit(*)",
+                    "Write(*)",
+                    "Read(*)",
+                    "Glob(*)",
+                    "Grep(*)",
+                    "Web Fetch(*)",
+                    "Todo(*)",
+                    "Task(*)",
+                    "Skill(*)",
+                    "Memory(*)"
                 ],
                 "deny": []
             },
             "env": {
                 "CLAUDE_CODE_AUTO_CONNECT_IDE": "false",
-                "DISABLE_INTERLEAVED_THINKING": "true"
+                "ANTHROPIC_MODEL": model,
+                "CLAUDE_CODE_EFFORT_LEVEL": effort
             }
         }
-        
+
         import json
         return json.dumps(settings, indent=2, ensure_ascii=False)
     

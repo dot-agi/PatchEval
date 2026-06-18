@@ -55,6 +55,7 @@ class DockerManager:
                     tmp_file.write('\n')
             return tmp_file_path
         
+        tmp_file_path = None
         if llm_patch is not None:
             tmp_file_path = _create_patch_file(llm_patch)
             volumes[tmp_file_path] = {'bind': '/workspace/fix.patch', 'mode': 'rw'}
@@ -66,17 +67,21 @@ class DockerManager:
                 detach=True,
                 tty=True,
                 stdin_open=True,
+                platform=os.getenv("DOCKER_DEFAULT_PLATFORM") or None,
                 volumes=volumes if volumes else None
             )
+            # Keep the temp patch file alive for the container's lifetime: it backs
+            # the /workspace/fix.patch bind mount, which resolves the host path at
+            # access time (notably on macOS Docker Desktop / VirtioFS). Unlinking it
+            # here would make /workspace/fix.patch vanish before fix-run.sh applies
+            # it. It is removed in rm_container() once the container is gone.
+            self._tmp_patch_path = tmp_file_path
             return container_name
         except Exception as e:
-            self.logger.debug(f"Failed to start container: {e}", extra={"cve": self.cve})
-            return None
-        finally:
-            # clean up temp file
             if tmp_file_path and os.path.exists(tmp_file_path):
                 os.unlink(tmp_file_path)
-                tmp_file_path = None
+            self.logger.debug(f"Failed to start container: {e}", extra={"cve": self.cve})
+            return None
 
     def rm_container(self, container_name: str) -> None:
         """Stop and remove the container if it exists. Also remove temp patch file if exists."""
@@ -87,6 +92,16 @@ class DockerManager:
         except Exception as e:
             if self.verbose:
                 self.logger.debug(f"Failed to remove container: {e}", extra={"cve": self.cve})
+        finally:
+            # Remove the temp patch file that backed the /workspace/fix.patch bind
+            # mount, now that the container (and thus the mount) is gone.
+            tmp = getattr(self, "_tmp_patch_path", None)
+            if tmp and os.path.exists(tmp):
+                try:
+                    os.unlink(tmp)
+                except Exception:
+                    pass
+                self._tmp_patch_path = None
 
     def exec_container(self, container_name: str, cmd: str, flag: bool = False, timeout: int = 600) -> Tuple[Optional[str], Optional[str]]:
         """Execute a command inside the container using bash -c."""

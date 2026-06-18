@@ -26,7 +26,8 @@ def pull_one_image(image, ghcr_token=None, logger=None):
         logger.info(f"[{image}] start pull")
         start_time = datetime.now()
 
-        pull_log = low_api.pull(image, stream=True, decode=True)
+        pull_log = low_api.pull(image, stream=True, decode=True,
+                                platform=os.getenv("DOCKER_DEFAULT_PLATFORM") or None)
         last_status = None
         for line in pull_log:
             status = line.get("status", "").strip()
@@ -45,10 +46,12 @@ def batch_pull_github_images(
     images_file="images.txt",
     log_file="pull.log",
     ghcr_token=None,
-    max_workers=4   
+    max_workers=4,
+    limit=None
 ):
     """
-    Multi-threaded pull images
+    Multi-threaded pull images. Pass `limit` to pull only the first N entries
+    (useful for testing on a subset instead of all 230 images).
     """
     logging.basicConfig(
         level=logging.INFO,
@@ -67,6 +70,9 @@ def batch_pull_github_images(
         if not images:
             logger.warning("Image list is empty!")
             return 0, 0
+        if limit:
+            images = images[:limit]
+            logger.info(f"Limiting to first {len(images)} image(s)")
         logger.info(f"Read {len(images)} images from {images_file}")
     except Exception as e:
         logger.error(f"Read image list file {images_file} fail: {e}")
@@ -100,9 +106,26 @@ def batch_pull_github_images(
     return success, fail
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Pull PatchEval CVE Docker images (all of them, or a subset)."
+    )
+    parser.add_argument("--images-file", default="images.txt",
+                        help="File listing images to pull, one per line (default: images.txt).")
+    parser.add_argument("--limit", type=int, default=None,
+                        help="Only pull the first N images from the list.")
+    parser.add_argument("--max-workers", type=int, default=16,
+                        help="Number of parallel pull workers (default: 16).")
+    parser.add_argument("--log-file", default="pull_images.log")
+    parser.add_argument("--ghcr-token", default="",
+                        help="Optional GHCR token for private images.")
+    args = parser.parse_args()
+
     batch_pull_github_images(
-        images_file="images.txt",
-        log_file="pull_images.log",
-        ghcr_token="",  
-        max_workers=16,  
+        images_file=args.images_file,
+        log_file=args.log_file,
+        ghcr_token=args.ghcr_token or None,
+        max_workers=args.max_workers,
+        limit=args.limit,
     )
