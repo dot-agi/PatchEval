@@ -72,6 +72,13 @@ def run_work_container_no_mount(image_name: str,
         value = os.getenv(key)
         if value:
             api_keys[key] = value
+    # When authenticating the in-container Claude Code with a subscription OAuth
+    # token, do not inject a raw Anthropic key/token into the container - it would
+    # take precedence over CLAUDE_CODE_OAUTH_TOKEN. (The token itself is delivered
+    # via the install script's ~/.bashrc, since `su -` resets the env.)
+    if os.getenv("CLAUDE_CODE_OAUTH_TOKEN"):
+        api_keys.pop("ANTHROPIC_API_KEY", None)
+        api_keys.pop("ANTHROPIC_AUTH_TOKEN", None)
     with semaphore:
         logging.info(f"Starting container-native work container: {container_name}")
         try:
@@ -81,6 +88,7 @@ def run_work_container_no_mount(image_name: str,
                 command=command,
                 detach=True,
                 remove=False,
+                platform=os.getenv("DOCKER_DEFAULT_PLATFORM") or None,
                 environment=api_keys,
                 mem_limit="4g",
                 cpu_quota=400000,  # 4 CPU cores
@@ -129,7 +137,7 @@ def pull_image_with_retry(image_name: str,
         try:
             with semaphore:
                 logging.info(f"Pulling image {image_name} (attempt {attempt + 1}/{max_retries + 1})")
-                client.images.pull(image_name)
+                client.images.pull(image_name, platform=os.getenv("DOCKER_DEFAULT_PLATFORM") or None)
                 logging.info(f"Successfully pulled {image_name}")
                 return
                 
