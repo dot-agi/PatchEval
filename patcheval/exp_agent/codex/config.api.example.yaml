@@ -1,0 +1,21 @@
+# Codex via OpenAI/Codex API KEY — FULL set (229 CVEs).
+# Usage:  cp config.api.example.yaml config.yaml   (config.yaml is git-ignored)
+#         # fill api_key below, then:
+#         bash shells/run_infer.sh
+agent: codex
+model: gpt-5.5
+reasoning: xhigh               # low|medium|high|xhigh   (codex has NO "max")
+auth:
+  method: api_key
+  credentials:
+    api_key: REPLACE_ME        # <-- your OpenAI/Codex API key
+run:
+  dataset: dataset.jsonl       # full set (229 CVEs)
+  outputs_root: ./outputs/full
+  strategy: default
+  max_workers: 8               # EC2 native amd64: tune to instance RAM (~1-2 GB/CVE) + your API rate limit
+  timeout: 45m
+  agent_timeout: 30m
+  docker_platform: null        # null = native (Linux EC2 amd64). Use linux/amd64 ONLY on Apple Silicon.
+  use_harness_skills: true      # note: codex/ ships the Codex Security plugin; vendor the defending-code
+                                # harness into codex/third_party/ if you want that skill too

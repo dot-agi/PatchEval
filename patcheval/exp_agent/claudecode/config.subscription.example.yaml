@@ -1,0 +1,20 @@
+# Claude Code via Claude SUBSCRIPTION (OAuth token) — FULL set (229 CVEs).
+# Usage:  cp config.subscription.example.yaml config.yaml   (config.yaml is git-ignored)
+#         # on this machine run:  claude setup-token   -> paste the sk-ant-oat01-... token below
+#         bash shells/run_infer.sh
+agent: claude-code
+model: claude-opus-4-8
+reasoning: max                 # low|medium|high|xhigh|max
+auth:
+  method: subscription
+  credentials:
+    oauth_token: REPLACE_ME    # <-- from `claude setup-token` (sk-ant-oat01-...)
+run:
+  dataset: dataset.jsonl       # full set (229 CVEs)
+  outputs_root: ./outputs/full
+  strategy: default
+  max_workers: 8               # EC2 native amd64: tune to instance RAM (~1-2 GB/CVE) + your rate limit
+  timeout: 45m
+  agent_timeout: 30m
+  docker_platform: null        # null = native (Linux EC2 amd64). Use linux/amd64 ONLY on Apple Silicon.
+  use_harness_skills: true

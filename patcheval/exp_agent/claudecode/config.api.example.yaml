@@ -1,0 +1,20 @@
+# Claude Code via Anthropic API KEY — FULL set (229 CVEs).
+# Usage:  cp config.api.example.yaml config.yaml   (config.yaml is git-ignored)
+#         # fill api_key below, then:
+#         bash shells/run_infer.sh
+agent: claude-code
+model: claude-opus-4-8
+reasoning: max                 # low|medium|high|xhigh|max
+auth:
+  method: api_key
+  credentials:
+    api_key: REPLACE_ME        # <-- your Anthropic API key (sk-ant-...)
+run:
+  dataset: dataset.jsonl       # full set (229 CVEs)
+  outputs_root: ./outputs/full
+  strategy: default
+  max_workers: 8               # EC2 native amd64: tune to instance RAM (~1-2 GB/CVE) + your API rate limit
+  timeout: 45m                 # hard cap per CVE (total)
+  agent_timeout: 30m           # cap on the agent run itself
+  docker_platform: null        # null = native (Linux EC2 amd64). Use linux/amd64 ONLY on Apple Silicon.
+  use_harness_skills: true      # install the defending-code harness skills in-container

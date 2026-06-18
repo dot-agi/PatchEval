@@ -1,0 +1,31 @@
+# Codex via ChatGPT SUBSCRIPTION — FULL set (229 CVEs).
+# Usage:  cp config.subscription.example.yaml config.yaml   (config.yaml is git-ignored)
+#         # on this machine run:  codex login    (creates ~/.codex/auth.json)
+#         # then paste the FULL contents of ~/.codex/auth.json into auth_json below,
+#         # OR auto-fill it (run from this dir, after copying to config.yaml):
+#         #   python3 -c 'import json,yaml,os; a=json.load(open(os.path.expanduser("~/.codex/auth.json"))); c=yaml.safe_load(open("config.yaml")); c["auth"]["credentials"]["auth_json"]=a; yaml.safe_dump(c,open("config.yaml","w"),sort_keys=False)'
+#         bash shells/run_infer.sh
+agent: codex
+model: gpt-5.5
+reasoning: xhigh               # low|medium|high|xhigh   (codex has NO "max")
+auth:
+  method: subscription
+  credentials:
+    # Replace the token values with those from ~/.codex/auth.json (keep the nested shape).
+    # Required: auth_mode + tokens.{access_token, refresh_token, account_id}
+    auth_json:
+      auth_mode: chatgpt
+      tokens:
+        id_token: REPLACE_ME
+        access_token: REPLACE_ME
+        refresh_token: REPLACE_ME
+        account_id: REPLACE_ME
+run:
+  dataset: dataset.jsonl       # full set (229 CVEs)
+  outputs_root: ./outputs/full
+  strategy: default
+  max_workers: 8               # EC2 native amd64: tune to instance RAM (~1-2 GB/CVE) + your rate limit
+  timeout: 45m
+  agent_timeout: 30m
+  docker_platform: null        # null = native (Linux EC2 amd64). Use linux/amd64 ONLY on Apple Silicon.
+  use_harness_skills: true
