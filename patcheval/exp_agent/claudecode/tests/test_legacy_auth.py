@@ -64,3 +64,32 @@ def test_legacy_api_key_only(monkeypatch):
     assert "export CLAUDE_CODE_OAUTH_TOKEN=" not in install
     # Placeholder was substituted away.
     assert "{{AUTH_EXPORTS}}" not in install
+
+
+def test_legacy_no_credential_emits_empty_auth_block(monkeypatch):
+    monkeypatch.chdir(PROJECT_ROOT)
+    # Host env: NEITHER credential present -> final fallback emits an empty block.
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+
+    # No cfg -> legacy auth-selection path.
+    runner = ClaudeRunnerEnhanced("cid", "/workspace/repo")
+
+    writes = []
+    monkeypatch.setattr(
+        runner, "_write_file_to_container",
+        lambda path, content: writes.append((path, content)),
+    )
+    monkeypatch.setattr(runner, "_exec_in_container", lambda *a, **k: "")
+    monkeypatch.setattr(runner, "_exec_in_container_with_output", lambda *a, **k: "")
+    monkeypatch.setattr(runner, "_install_harness_skills", lambda: None)
+
+    record = _make_record()
+    ok = runner.setup_environment(record, "default", None, "anthropic", "")
+    assert ok is True
+
+    install = _install_script(writes)
+    # {{AUTH_EXPORTS}} was replaced by an empty string: no auth exports at all.
+    assert "export ANTHROPIC_API_KEY=" not in install
+    assert "export CLAUDE_CODE_OAUTH_TOKEN=" not in install
+    assert "{{AUTH_EXPORTS}}" not in install

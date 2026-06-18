@@ -197,7 +197,7 @@ class ClaudeRunnerEnhanced:
                 elif os.getenv("ANTHROPIC_API_KEY"):
                     auth_block = build_claude_auth_exports("api_key", {"api_key": os.getenv("ANTHROPIC_API_KEY")}, model_env, effort_env)
                 else:
-                    auth_block = build_claude_auth_exports("subscription", {"oauth_token": ""}, model_env, effort_env)
+                    auth_block = ""   # no host credential present (unreachable in practice: the cli preflight rejects this) — emit no auth exports rather than an empty OAuth token
             install_script = install_script.replace("{{AUTH_EXPORTS}}", auth_block)
             install_script = install_script.replace("$PORT$", port or "")
             
