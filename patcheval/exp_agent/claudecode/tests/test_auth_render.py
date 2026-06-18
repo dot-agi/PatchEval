@@ -1,5 +1,5 @@
 import shlex
-from patcheval.config import build_claude_auth_exports, build_codex_auth
+from patcheval.config import build_claude_auth_exports
 
 
 def _unset_line(s):
@@ -52,8 +52,3 @@ def test_vertex_sets_use_vertex_and_unsets_bedrock():
     # ... and the unset-all line does not leave CLAUDE_CODE_USE_BEDROCK set.
     assert "CLAUDE_CODE_USE_BEDROCK" in _unset_line(s)
     assert "export CLAUDE_CODE_USE_BEDROCK=1" not in s
-
-
-def test_codex_api_key():
-    exports, aj = build_codex_auth("api_key", {"api_key":"sk-oai"})
-    assert f"export CODEX_API_KEY={shlex.quote('sk-oai')}" in exports and aj is None

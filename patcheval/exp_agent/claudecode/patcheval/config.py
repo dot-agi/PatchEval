@@ -3,9 +3,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from shlex import quote as _q
 from typing import Optional
-import json as _json
 
-BACKEND = "claude-code"   # the codex/ copy of this file sets this to "codex"
+# This module is Claude-Code-specific. The codex/ dir has its own config.py with
+# the Codex auth methods + renderer; the two intentionally do not share code.
+BACKEND = "claude-code"
 
 
 class ConfigError(ValueError):
@@ -70,43 +71,30 @@ def load_config(path) -> "AgentRunConfig":
     return cfg
 
 
-REASONING_BY_AGENT = {
-    "claude-code": {"low", "medium", "high", "xhigh", "max"},
-    "codex": {"low", "medium", "high", "xhigh"},   # gpt-5.5 has no "max"
-}
-METHODS_BY_AGENT = {
-    "claude-code": {"subscription", "api_key", "bedrock", "vertex"},
-    "codex": {"subscription", "api_key"},
-}
+# --- claude-code validation -------------------------------------------------
+VALID_REASONING = {"low", "medium", "high", "xhigh", "max"}
+VALID_METHODS = {"subscription", "api_key", "bedrock", "vertex"}
 CRED_KEYSETS = {
-    ("claude-code", "subscription"): [["oauth_token"]],
-    ("claude-code", "api_key"): [["api_key"]],
-    ("claude-code", "bedrock"): [["aws_access_key_id","aws_secret_access_key","aws_region"], ["bearer_token","aws_region"]],
-    ("claude-code", "vertex"): [["project","region","credentials_json_path"], ["project","region","access_token"]],
-    ("codex", "api_key"): [["api_key"]],
-    ("codex", "subscription"): [["auth_json"], ["auth_json_path"]],
+    "subscription": [["oauth_token"]],
+    "api_key": [["api_key"]],
+    "bedrock": [["aws_access_key_id", "aws_secret_access_key", "aws_region"], ["bearer_token", "aws_region"]],
+    "vertex": [["project", "region", "credentials_json_path"], ["project", "region", "access_token"]],
 }
 
 
 def validate(cfg: "AgentRunConfig") -> None:
     if cfg.agent != BACKEND:
         raise ConfigError(f"this dir runs {BACKEND!r}; config has agent {cfg.agent!r}")
-    if cfg.reasoning not in REASONING_BY_AGENT[cfg.agent]:
-        raise ConfigError(f"reasoning {cfg.reasoning!r} invalid for {cfg.agent} "
-                          f"(valid: {sorted(REASONING_BY_AGENT[cfg.agent])})")
-    if cfg.auth.method not in METHODS_BY_AGENT[cfg.agent]:
-        raise ConfigError(f"auth.method {cfg.auth.method!r} invalid for {cfg.agent} "
-                          f"(valid: {sorted(METHODS_BY_AGENT[cfg.agent])})")
-    keysets = CRED_KEYSETS[(cfg.agent, cfg.auth.method)]
+    if cfg.reasoning not in VALID_REASONING:
+        raise ConfigError(f"reasoning {cfg.reasoning!r} invalid for claude-code "
+                          f"(valid: {sorted(VALID_REASONING)})")
+    if cfg.auth.method not in VALID_METHODS:
+        raise ConfigError(f"auth.method {cfg.auth.method!r} invalid for claude-code "
+                          f"(valid: {sorted(VALID_METHODS)})")
     creds = cfg.auth.credentials
+    keysets = CRED_KEYSETS[cfg.auth.method]
     if not any(all(k in creds for k in ks) for ks in keysets):
         raise ConfigError("credentials must include one of: " + " OR ".join("+".join(ks) for ks in keysets))
-    if (cfg.agent, cfg.auth.method) == ("codex", "subscription") and "auth_json" in creds:
-        aj = creds.get("auth_json") if isinstance(creds.get("auth_json"), dict) else {}
-        toks = aj.get("tokens", {}) if isinstance(aj.get("tokens"), dict) else {}
-        if not aj.get("auth_mode") or any(not toks.get(k) for k in ("access_token","refresh_token","account_id")):
-            raise ConfigError("codex subscription auth_json must be the full blob: "
-                              "auth_mode + tokens.{access_token,refresh_token,account_id}")
 
 
 def _ex(name: str, value: str) -> str:
@@ -133,12 +121,3 @@ def build_claude_auth_exports(method, creds, model, reasoning) -> str:
         lines.append(_ex("GOOGLE_APPLICATION_CREDENTIALS", creds["credentials_json_path"])
                      if "credentials_json_path" in creds else _ex("VERTEX_AUTH_TOKEN", creds["access_token"]))
     return "\n".join(lines)
-
-
-def build_codex_auth(method, creds):
-    """Return (bashrc_export_block, auth_json_content_or_None)."""
-    if method == "api_key":
-        return (_ex("CODEX_API_KEY", creds["api_key"]) + "\nunset OPENAI_API_KEY", None)
-    if method == "subscription":
-        return ("unset CODEX_API_KEY OPENAI_API_KEY", _json.dumps(creds["auth_json"], indent=2))
-    return ("", None)
