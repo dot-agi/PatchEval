@@ -20,15 +20,9 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.."   # codex project root
 
-# --- ensure the defending-code harness is present (source of the in-container skills) ---
-# Idempotent: clones only if missing. third_party/ is git-ignored, so a fresh checkout
-# needs this. Non-fatal: if the clone fails Codex still runs (with its Security plugin only).
-HARNESS_DIR="third_party/defending-code-reference-harness"
-if [ ! -d "$HARNESS_DIR/.claude/skills" ]; then
-    echo "[setup] fetching defending-code harness -> $HARNESS_DIR"
-    git clone --depth 1 https://github.com/anthropics/defending-code-reference-harness "$HARNESS_DIR" \
-        || echo "[setup] WARNING: harness clone failed; Codex will run WITHOUT defending-code skills" >&2
-fi
+# NOTE: the defending-code harness is a Claude Code tool and is intentionally NOT
+# used by Codex (no harness clone here). Codex repairs from the prompt + its own
+# Codex Security plugin.
 
 PY="python"; [ -x ".venv/bin/python" ] && PY=".venv/bin/python"
 

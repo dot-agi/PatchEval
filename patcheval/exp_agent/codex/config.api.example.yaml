@@ -17,5 +17,3 @@ run:
   timeout: 45m
   agent_timeout: 30m
   docker_platform: null        # null = native (Linux EC2 amd64). Use linux/amd64 ONLY on Apple Silicon.
-  use_harness_skills: true      # note: codex/ ships the Codex Security plugin; vendor the defending-code
-                                # harness into codex/third_party/ if you want that skill too

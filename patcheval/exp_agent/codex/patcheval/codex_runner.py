@@ -160,14 +160,9 @@ class CodexRunner:
             self._write_file_to_container("/workspace/codex_prompt.md", prompt)
             self._log_process_step("prompt_generation", "wrote codex_prompt.md + AGENTS.md")
 
-            # Install the defending-code harness so Codex can follow the same
-            # vuln-scan -> triage -> patch process as the Claude Code agent. The
-            # config-driven run can opt out via run.use_harness_skills=False.
-            if self.cfg is None or self.cfg.run.use_harness_skills:
-                self._install_harness()
-
-            # Commit the tooling (AGENTS.md, .claude/, harness) so the agent's
-            # final `git diff` contains only the real source fix.
+            # Commit the tooling (AGENTS.md etc.) so the agent's final `git diff`
+            # contains only the real source fix. (The defending-code harness is a
+            # Claude Code tool and is intentionally NOT used by Codex.)
             self._git_commit_tooling()
 
             self._exec_in_container("chown", f"-R claude_user:claude_user {self.work_dir}")
@@ -264,41 +259,6 @@ class CodexRunner:
             self._log_process_step("codex_auth_seeded", f"{self.codex_home}/auth.json")
         except Exception as e:
             self.logger.warning(f"seed auth error: {e}")
-
-    def _install_harness(self) -> None:
-        """Copy the defending-code-reference-harness skills into the workspace so
-        Codex can follow the same process as the Claude Code agent.
-
-        NOTE: Codex is not a Claude skill host; the repair prompt drives the
-        vuln-scan -> triage -> patch workflow as prose and references these files.
-        Whether Codex auto-loads them as native skills is a runtime detail to
-        verify when the Codex backend is first run live.
-        """
-        skills_dir = os.getenv(
-            "DEFENDING_CODE_SKILLS_DIR",
-            "third_party/defending-code-reference-harness/.claude/skills",
-        )
-        skills_path = Path(skills_dir)
-        if not skills_path.exists():
-            self.logger.info(
-                f"defending-code skills not found at {skills_path}; Codex will do a "
-                "direct repair from the prompt."
-            )
-            self._log_process_step("harness_skills_missing", str(skills_path))
-            return
-        try:
-            dest = f"{self.work_dir}/.claude/skills"
-            self._exec_in_container("mkdir", f"-p {dest}")
-            cp = subprocess.run(
-                f"docker cp {skills_path}/. {self.container_id}:{dest}/",
-                shell=True, capture_output=True, text=True,
-            )
-            if cp.returncode != 0:
-                self.logger.warning(f"failed to copy harness skills: {cp.stderr.strip()}")
-                return
-            self._log_process_step("harness_skills_installed", dest)
-        except Exception as e:
-            self.logger.warning(f"harness install error: {e}")
 
     def _install_security_plugin(self) -> None:
         """Seed the host-installed Codex Security plugin into the container's CODEX_HOME.

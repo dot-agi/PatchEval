@@ -14,4 +14,3 @@ run:
   timeout: 45m
   agent_timeout: 30m
   docker_platform: null
-  use_harness_skills: true

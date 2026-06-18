@@ -29,4 +29,3 @@ run:
   timeout: 45m
   agent_timeout: 30m
   docker_platform: null        # null = native (Linux amd64). Use linux/amd64 ONLY on Apple Silicon.
-  use_harness_skills: true

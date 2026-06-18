@@ -30,7 +30,6 @@ class RunConfig:
     tool_limits: Optional[str] = "total:200"
     max_cost_usd: float = 1000.0
     docker_platform: Optional[str] = None
-    use_harness_skills: bool = True
 
 
 @dataclass
