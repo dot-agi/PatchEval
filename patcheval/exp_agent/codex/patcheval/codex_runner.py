@@ -238,8 +238,10 @@ class CodexRunner:
             self._exec_in_container("chown", f"-R claude_user:claude_user {self.codex_home}")
             self._log_process_step("codex_auth_seeded_cfg", f"{self.codex_home}/auth.json")
             return
+        cfg_path = (self.cfg.auth.credentials.get("auth_json_path")
+                    if getattr(self, "cfg", None) is not None else None)
         host_auth = os.path.expanduser(
-            os.getenv("HOST_CODEX_AUTH", "~/.codex/auth.json")
+            cfg_path or os.getenv("HOST_CODEX_AUTH", "~/.codex/auth.json")
         )
         if not os.path.exists(host_auth):
             self.logger.warning(

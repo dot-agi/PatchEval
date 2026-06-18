@@ -21,3 +21,8 @@ def test_codex_subscription_full_blob(tmp_path):
     load_config(_w(tmp_path, {"agent":"codex","model":"gpt-5.5","reasoning":"high",
         "auth":{"method":"subscription","credentials":{"auth_json":{"auth_mode":"chatgpt",
             "tokens":{"access_token":"a","refresh_token":"r","id_token":"i","account_id":"x"}}}}}))
+def test_codex_subscription_auth_json_path(tmp_path):
+    # Reference the host auth.json file instead of inlining the blob (runner reads it at run time).
+    cfg = load_config(_w(tmp_path, {"agent":"codex","model":"gpt-5.5","reasoning":"high",
+        "auth":{"method":"subscription","credentials":{"auth_json_path":"~/.codex/auth.json"}}}))
+    assert cfg.auth.credentials["auth_json_path"] == "~/.codex/auth.json"

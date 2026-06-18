@@ -84,7 +84,7 @@ CRED_KEYSETS = {
     ("claude-code", "bedrock"): [["aws_access_key_id","aws_secret_access_key","aws_region"], ["bearer_token","aws_region"]],
     ("claude-code", "vertex"): [["project","region","credentials_json_path"], ["project","region","access_token"]],
     ("codex", "api_key"): [["api_key"]],
-    ("codex", "subscription"): [["auth_json"]],
+    ("codex", "subscription"): [["auth_json"], ["auth_json_path"]],
 }
 
 
@@ -101,7 +101,7 @@ def validate(cfg: "AgentRunConfig") -> None:
     creds = cfg.auth.credentials
     if not any(all(k in creds for k in ks) for ks in keysets):
         raise ConfigError("credentials must include one of: " + " OR ".join("+".join(ks) for ks in keysets))
-    if (cfg.agent, cfg.auth.method) == ("codex", "subscription"):
+    if (cfg.agent, cfg.auth.method) == ("codex", "subscription") and "auth_json" in creds:
         aj = creds.get("auth_json") if isinstance(creds.get("auth_json"), dict) else {}
         toks = aj.get("tokens", {}) if isinstance(aj.get("tokens"), dict) else {}
         if not aj.get("auth_mode") or any(not toks.get(k) for k in ("access_token","refresh_token","account_id")):
