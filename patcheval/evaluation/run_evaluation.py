@@ -31,6 +31,51 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
+# Regex identifying a test file by its target path (case-insensitive).
+_TEST_PATH_RE = re.compile(
+    r'(^|/)(tests?|spec|specs)/|(^|/)test_|_test\.|\.test\.|\.spec\.|_spec\.|conftest',
+    re.IGNORECASE,
+)
+
+
+def strip_test_hunks(patch_text: str) -> str:
+    """Return *patch_text* with every test-file section removed.
+
+    A unified git diff is a concatenation of per-file sections, each starting
+    with a line 'diff --git a/<old> b/<new>'. `git apply` is atomic, so a single
+    non-matching test-file hunk rejects the WHOLE patch -- including an otherwise
+    valid source fix. This drops any section whose target (b/) path looks like a
+    test file, keeping only the source sections so the source fix can apply alone.
+    """
+    # Split into per-file sections, preserving bytes exactly.
+    sections, cur, preamble, started = [], [], [], False
+    for line in patch_text.splitlines(keepends=True):
+        if line.startswith('diff --git '):
+            if cur:
+                sections.append(''.join(cur))
+            cur = [line]
+            started = True
+        else:
+            (cur if started else preamble).append(line)
+    if cur:
+        sections.append(''.join(cur))
+
+    def _target_path(section: str) -> str:
+        # Prefer the b/ path from 'diff --git a/.. b/..'; fall back to '+++ b/..'.
+        first = section.splitlines()[0] if section else ''
+        m = re.match(r'^diff --git a/(.*?) b/(.*)$', first)
+        if m:
+            return m.group(2).strip()
+        for ln in section.splitlines():
+            if ln.startswith('+++ '):
+                p = ln[4:].split('\t')[0].strip()
+                return p[2:] if p.startswith('b/') else p
+        return ''
+
+    kept = [s for s in sections if not _TEST_PATH_RE.search(_target_path(s))]
+    return ''.join(preamble) + ''.join(kept)
+
+
 class DockerManager:
     """A small facade around Docker Python SDK."""
 
@@ -48,6 +93,11 @@ class DockerManager:
         image_name = f"ghcr.io/anonymous2578-data/{cve.lower()}:latest"
         volumes = {}
         def _create_patch_file(llm_patch):
+            # Opt-in (STRIP_TEST_HUNKS=1): drop test-file sections before writing
+            # so a non-matching test hunk can't reject an otherwise-valid source
+            # fix. Env unset/other => unchanged behavior.
+            if os.getenv("STRIP_TEST_HUNKS") == "1":
+                llm_patch = strip_test_hunks(llm_patch)
             fd, tmp_file_path = tempfile.mkstemp(suffix='.patch')
             with os.fdopen(fd, 'w', encoding='utf-8') as tmp_file:
                 tmp_file.write(llm_patch)
